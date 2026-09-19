@@ -173,8 +173,8 @@ export default function AdminModule() {
 {JSON.stringify({
   resourceType: 'Practitioner',
   id: 'fhir-1',
-  identifier: [{ system: 'http://aigh.sa/job-number', value: 'AIGH-0001' }],
-  name: [{ family: 'Ahmed', given: ['Sarah'] }],
+  identifier: [{ system: 'http://aigh.sa/job-number', value: '1001' }],
+  name: [{ family: 'Al-Harbi', given: ['Sarah', 'Ahmed'] }],
   telecom: [{ system: 'email', value: 'sarah.ahmed@aigh.sa' }],
 }, null, 2)}
                       </pre>

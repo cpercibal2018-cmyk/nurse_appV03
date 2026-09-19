@@ -3,6 +3,7 @@ import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker
 import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
 import dayjs from 'dayjs';
+import { toHijri, toHijriShort } from '../../lib/hijri';
 
 const { Title, Text } = Typography;
 
@@ -13,6 +14,10 @@ export default function ContractsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingContract, setEditingContract] = useState<any>(null);
   const [form] = Form.useForm();
+
+  // Live Gregorian → Hijri (Umm al-Qura) conversion for the contract date pickers
+  const startWatch = Form.useWatch('startDate', form);
+  const endWatch = Form.useWatch('endDate', form);
 
   const filtered = contracts.filter(c => {
     if (search) {
@@ -102,8 +107,16 @@ export default function ContractsPage() {
         return unit ? <Tag>{unit.code}</Tag> : '-';
       }
     },
-    { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 120 },
-    { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 120 },
+    {
+      title: 'Contract Start (Greg + Hijri)', key: 'startDate', width: 150,
+      render: (_: any, r: any) => <><Text style={{ fontSize: 11 }}>{r.startDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{r.startDateHijri || toHijriShort(r.startDate)} هـ</Text></>,
+      sorter: (a: any, b: any) => String(a.startDate).localeCompare(String(b.startDate)),
+    },
+    {
+      title: 'Contract End (Greg + Hijri)', key: 'endDate', width: 150,
+      render: (_: any, r: any) => <><Text style={{ fontSize: 11 }}>{r.endDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{r.endDateHijri || toHijriShort(r.endDate)} هـ</Text></>,
+      sorter: (a: any, b: any) => String(a.endDate).localeCompare(String(b.endDate)),
+    },
     {
       title: 'Status', dataIndex: 'status', key: 'status', width: 130,
       render: (status: string) => {
@@ -194,7 +207,7 @@ export default function ContractsPage() {
               <Descriptions.Item label="Source">Job Number is from the contract that to be entered — entered during onboarding + contract creation, stored in employees.job_number with unique index</Descriptions.Item>
               <Descriptions.Item label="Unique">Per actor + Job Number idempotency — duplicate job number triggers atomic rollback via DB unique constraint + fn_onboard_employee_with_contract</Descriptions.Item>
               <Descriptions.Item label="Traceability">Contract.jobNumber denormalized for traceability, audit logs job_number, FHIR Practitioner identifier system http://aigh.sa/job-number</Descriptions.Item>
-              <Descriptions.Item label="Example">AIGH-0001, AIGH-0002 — format AIGH-XXXX, 4 digits</Descriptions.Item>
+              <Descriptions.Item label="Format">No fixed format — plain numbers (1001, 2003) or a text + number combination (AIGH1002, EMP2004, NUR4008). The retired AIGH-XXXX pattern is not required and is not enforced.</Descriptions.Item>
             </Descriptions>
           </Card>
         </Col>
@@ -235,10 +248,10 @@ export default function ContractsPage() {
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="startDate" label="Contract Start Date (Inclusive)" rules={[{ required: true }]} extra="Inclusive — next non-overlapping renewal starts after previous end."><DatePicker style={{ width: '100%' }} /></Form.Item>
+              <Form.Item name="startDate" label="Contract Start — Required Hijri Date" rules={[{ required: true }]} extra={startWatch ? `Hijri: ${toHijri(startWatch)}` : 'Inclusive — next non-overlapping renewal starts after previous end. Hijri converted automatically.'}><DatePicker style={{ width: '100%' }} /></Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="endDate" label="Contract End Date (Inclusive)" rules={[{ required: true }]} extra="Must be after start. Expired/Suspended/Terminated/Superseded do NOT provide coverage."><DatePicker style={{ width: '100%' }} /></Form.Item>
+              <Form.Item name="endDate" label="Contract End — Required Hijri Date" rules={[{ required: true }]} extra={endWatch ? `Hijri: ${toHijri(endWatch)}` : 'Must be after start. Expired/Suspended/Terminated/Superseded do NOT provide coverage. Hijri converted automatically.'}><DatePicker style={{ width: '100%' }} /></Form.Item>
             </Col>
           </Row>
 
@@ -252,7 +265,7 @@ export default function ContractsPage() {
           </Form.Item>
 
           <Descriptions bordered size="small" column={1} style={{ marginTop: 16 }}>
-            <Descriptions.Item label="Job Number">From contract to be entered — unique per employee, stored in employees.job_number with unique index, duplicate triggers atomic rollback. Example AIGH-0001. FHIR identifier system http://aigh.sa/job-number.</Descriptions.Item>
+            <Descriptions.Item label="Job Number">From contract to be entered — unique per employee, stored in employees.job_number with unique index, duplicate triggers atomic rollback. No fixed format — plain number or text + number combination (e.g. 1001, AIGH1002). FHIR identifier system http://aigh.sa/job-number.</Descriptions.Item>
             <Descriptions.Item label="Exclusion Constraint">GiST daterange && WHERE status IN (Approved,Active) — overlapping Approved/Active periods same employee rejected at DB level. Approved future can satisfy eligibility for shift within that future.</Descriptions.Item>
             <Descriptions.Item label="Scope">HR_ADMIN scoped create/approval/renewal/termination + full history + attachments, Supervisor scoped reduced read (identifiers, employee/position, unit, status, dates), Employee own reduced read. Server-evaluated scope — passing nurse ID from browser does NOT establish access.</Descriptions.Item>
           </Descriptions>

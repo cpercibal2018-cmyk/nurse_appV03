@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED } from '../data/seed';
+import { toHijriIso } from './hijri';
 
 export type Employee = {
   id: number;
@@ -29,8 +30,10 @@ export type Employee = {
 export type Contract = {
   id: number;
   employeeId: number;
-  startDate: string;
-  endDate: string;
+  startDate: string;   // Gregorian (ISO YYYY-MM-DD) — the authoritative instant
+  endDate: string;     // Gregorian (ISO YYYY-MM-DD)
+  startDateHijri?: string; // Umm al-Qura equivalent of startDate (YYYY-MM-DD Hijri), recorded at entry
+  endDateHijri?: string;   // Umm al-Qura equivalent of endDate (YYYY-MM-DD Hijri), recorded at entry
   status: 'Draft' | 'PendingApproval' | 'Approved' | 'Active' | 'Expired' | 'Suspended' | 'Terminated' | 'Superseded';
 };
 
@@ -424,7 +427,18 @@ export const useStore = create<Store>()(
           status: 'Active',
           hireDate: new Date().toISOString().split('T')[0]
         };
-        const newContract: Contract = { id: Math.max(0, ...state.contracts.map(c => c.id)) + 1, employeeId: newId, startDate: emp.contractStart, endDate: emp.contractEnd, status: 'Approved' };
+        const newContract: Contract = {
+          id: Math.max(0, ...state.contracts.map(c => c.id)) + 1,
+          employeeId: newId,
+          startDate: emp.contractStart,
+          endDate: emp.contractEnd,
+          // Contract Start/End are entered as Gregorian dates; the Umm al-Qura
+          // equivalent is converted once here and stored with the contract, so
+          // the recorded Hijri date cannot drift if the calendar tables change.
+          startDateHijri: (emp as any).contractStartHijri || toHijriIso(emp.contractStart),
+          endDateHijri: (emp as any).contractEndHijri || toHijriIso(emp.contractEnd),
+          status: 'Approved',
+        };
 
         // atomic transaction simulation — fn_onboard_employee_with_contract creates employee + approved contract + audit entry in one block
         set((s) => ({
@@ -432,7 +446,7 @@ export const useStore = create<Store>()(
           contracts: [...s.contracts, newContract],
         }));
 
-        get().addAuditEntry({ actorId: state.currentUser?.id || 1, action: 'EMPLOYEE_ONBOARDED', resource: 'employees', resourceId: String(newId), changes: { job_number: newEmployee.jobNumber, first_name: firstName, middle_name: middleName, last_name: lastName, full_name: fullName, job_title: jobTitle, file_no: fileNo, rank_grade: rankGrade, nationality, job_post_location: jobPostLocation, actual_work_place: actualWorkPlace, specialty, marital_status: maritalStatus, salary, contract_start: emp.contractStart, contract_end: emp.contractEnd, note: 'Job number plain format, no AIGH- prefix, from contract. Full Name auto = First + Middle + Last' } });
+        get().addAuditEntry({ actorId: state.currentUser?.id || 1, action: 'EMPLOYEE_ONBOARDED', resource: 'employees', resourceId: String(newId), changes: { job_number: newEmployee.jobNumber, first_name: firstName, middle_name: middleName, last_name: lastName, full_name: fullName, job_title: jobTitle, file_no: fileNo, rank_grade: rankGrade, nationality, job_post_location: jobPostLocation, actual_work_place: actualWorkPlace, specialty, marital_status: maritalStatus, salary, contract_start: emp.contractStart, contract_end: emp.contractEnd, contract_start_hijri: newContract.startDateHijri, contract_end_hijri: newContract.endDateHijri, note: 'Job Number recorded verbatim as entered (plain number or text + number combination, no format rule). Full Name derived from First + Middle + Last. Contract dates recorded in both Gregorian and Hijri (Umm al-Qura).' } });
         get().refreshEligibility(newId);
         return newId;
       },
@@ -445,7 +459,14 @@ export const useStore = create<Store>()(
 
       contracts: CONTRACTS_SEED as Contract[],
       addContract: (contract) => set((s) => ({
-        contracts: [...s.contracts, { ...contract, id: Math.max(0, ...s.contracts.map(c => c.id)) + 1 }]
+        contracts: [...s.contracts, {
+          ...contract,
+          // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
+          // the onboarding path, so every contract carries both calendars.
+          startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
+          endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
+          id: Math.max(0, ...s.contracts.map(c => c.id)) + 1,
+        }]
       })),
       updateContract: (id, data) => set((s) => ({
         contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
@@ -478,7 +499,7 @@ export const useStore = create<Store>()(
 
       auditEntries: [
         { id: 1, actorId: 1, action: 'SYSTEM_INIT', resource: 'system', resourceId: '0', changes: { message: 'System initialized with seed data' }, hash: 'a1b2c3d4', previousHash: null, createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-        { id: 2, actorId: 1, action: 'EMPLOYEE_ONBOARDED', resource: 'employees', resourceId: '1', changes: { job_number: 'AIGH-0001' }, hash: 'e5f6g7h8', previousHash: 'a1b2c3d4', createdAt: new Date(Date.now() - 86400000).toISOString() },
+        { id: 2, actorId: 1, action: 'EMPLOYEE_ONBOARDED', resource: 'employees', resourceId: '1', changes: { job_number: '1001' }, hash: 'e5f6g7h8', previousHash: 'a1b2c3d4', createdAt: new Date(Date.now() - 86400000).toISOString() },
       ] as AuditEntry[],
       addAuditEntry: (entry) => set((s) => {
         const last = s.auditEntries[s.auditEntries.length - 1];

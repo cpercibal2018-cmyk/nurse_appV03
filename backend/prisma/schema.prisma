@@ -98,12 +98,24 @@ model User {
 // First Name, Middle Name, Last Name fields, Full Name = First + Middle + Last automatic
 model Employee {
   id           String   @id @default(uuid()) @db.Uuid
-  jobNumber    String   @unique // Job Number is from the contract to be entered — unique per employee, plain numbers or text+number combination allowed (e.g. 1001, AIGH1002, EMP2004), no strict format, enforced by DB unique index + fn_onboard_employee_with_contract atomic rollback on duplicate §3.1
+  jobNumber    String   @unique // Job Number is from the contract to be entered — unique per employee. NO FIXED FORMAT: a plain number (1001) or a text + number combination (AIGH1002, EMP2004) are both valid; the retired AIGH-XXXX pattern is not required and is not enforced. Uniqueness only, via DB unique index + fn_onboard_employee_with_contract atomic rollback on duplicate §3.1
   firstName    String // First Name required
   middleName   String? // Middle Name optional
   lastName     String // Last Name required
   fullName     String // Full Name = First + Middle + Last automatic when user fills fields
   name         String // kept for backward compat = fullName
+
+  // --- HR fields, in onboarding-form order after Job Number -----------------
+  jobTitle        String? // Job Title
+  fileNo          String? // File No. — the personnel file reference (not constrained unique; HR may leave it blank)
+  rankGrade       String? // Rank/Grade
+  nationality     String? // Nationality
+  jobPostLocation String? // Job Post (Location Assignment) — city
+  actualWorkPlace String? // Actual Work Place
+  specialty       String? // Specialty
+  maritalStatus   MaritalStatus? // Marital Status — Single / Married / Others
+  salary          Decimal? @db.Decimal(12, 2) // Salary — amount in Saudi Riyals
+
   unitId       String   @db.Uuid
   positionCode String
   contactEmail String   @unique
@@ -119,8 +131,17 @@ model Employee {
 
   @@index([unitId])
   @@index([positionCode])
+  @@index([nationality])
+  @@index([specialty])
   @@map("employees")
 }
+
+enum MaritalStatus {
+  Single
+  Married
+  Others
+}
+
 
 enum ContractStatus {
   Draft
@@ -137,8 +158,10 @@ model Contract {
   id         String         @id @default(uuid()) @db.Uuid
   employeeId String         @db.Uuid
   jobNumber  String // Denormalized from Employee for contract-first traceability — job number is from the contract that to be entered
-  startDate  DateTime       @db.Date
-  endDate    DateTime       @db.Date
+  startDate  DateTime       @db.Date // Gregorian — the authoritative instant used by coverage checks
+  endDate    DateTime       @db.Date // Gregorian
+  startDateHijri String? // Umm al-Qura equivalent of startDate, recorded at entry (YYYY-MM-DD Hijri)
+  endDateHijri   String? // Umm al-Qura equivalent of endDate, recorded at entry (YYYY-MM-DD Hijri)
   status     ContractStatus @default(Draft)
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt

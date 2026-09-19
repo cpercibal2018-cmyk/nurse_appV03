@@ -2,54 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, Tag, Space, Input, Select, Modal, Form, message, Typography, Alert, Tooltip, Badge, Row, Col, DatePicker, InputNumber } from 'antd';
 import { PlusOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
+import { toHijri, toHijriShort, toHijriIso } from '../../lib/hijri';
 
 const { Title, Text } = Typography;
 
-// Hijri conversion — Gregorian to Hijri using Intl with islamic-umalqura calendar
-function toHijri(date: Date | string | null | undefined): string {
-  if (!date) return '-';
-  try {
-    const d = typeof date === 'string' ? new Date(date) : date;
-    if (isNaN(d.getTime())) return '-';
-    // Use islamic-umalqura calendar (Saudi official)
-    const fmt = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
-    const parts = fmt.formatToParts(d);
-    // Format as YYYY/MM/DD Hijri or localized
-    const day = parts.find(p => p.type === 'day')?.value || '';
-    const month = parts.find(p => p.type === 'month')?.value || '';
-    const year = parts.find(p => p.type === 'year')?.value || '';
-    // Also provide numeric version via en
-    const fmtEn = new Intl.DateTimeFormat('en-SA-u-ca-islamic-umalqura', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-    const numeric = fmtEn.format(d);
-    return `${day} ${month} ${year} هـ — ${numeric}`;
-  } catch {
-    return '-';
-  }
-}
+// Picklist values. Kept module-level so the onboarding form, the table filters
+// and any future edit form all offer the same closed set.
+const NATIONALITIES = ['Saudi', 'Egyptian', 'Pakistani', 'Filipino', 'Indian', 'Jordanian', 'Sudanese', 'Syrian', 'Yemeni', 'American', 'British', 'Canadian', 'Australian', 'South African', 'Other']
+  .map(n => ({ label: n, value: n }));
 
-function toHijriShort(date: Date | string | null | undefined): string {
-  if (!date) return '';
-  try {
-    const d = typeof date === 'string' ? new Date(date) : date;
-    if (isNaN(d.getTime())) return '';
-    const fmt = new Intl.DateTimeFormat('en-SA-u-ca-islamic-umalqura', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-    return fmt.format(d);
-  } catch {
-    return '';
-  }
-}
+const MARITAL_STATUSES = [
+  { label: 'Single', value: 'Single' },
+  { label: 'Married', value: 'Married' },
+  { label: 'Others', value: 'Others' },
+];
 
 export default function WorkforcePage() {
   const { employees, units, positions, contracts, credentials, eligibilityStates, addEmployee, deleteEmployee } = useStore();
@@ -68,10 +34,11 @@ export default function WorkforcePage() {
   const contractStartWatch = Form.useWatch('contractStart', form);
   const contractEndWatch = Form.useWatch('contractEnd', form);
 
+  // Full Name is derived, never typed: it is recomputed on every keystroke of
+  // First / Middle / Last and written back into the read-only field. Clearing
+  // the names clears it too, so it can never hold a stale value.
   useEffect(() => {
-    if (fullName) {
-      form.setFieldsValue({ fullName });
-    }
+    form.setFieldsValue({ fullName });
   }, [fullName, form]);
 
   const filtered = employees.filter(e => {
@@ -107,8 +74,10 @@ export default function WorkforcePage() {
         hireDate: new Date().toISOString().split('T')[0],
         contractStart: values.contractStart.format('YYYY-MM-DD'),
         contractEnd: values.contractEnd.format('YYYY-MM-DD'),
+        contractStartHijri: toHijriIso(values.contractStart),
+        contractEndHijri: toHijriIso(values.contractEnd),
       } as any);
-      message.success(`Employee onboarded — ID ${id} — Full Name auto = First+Middle+Last, Job Number ${values.jobNumber} plain, Hijri conversion shown`);
+      message.success(`Employee onboarded — ID ${id} — Full Name auto = First+Middle+Last, Job Number ${values.jobNumber}, contract ${toHijriIso(values.contractStart)} → ${toHijriIso(values.contractEnd)} هـ`);
       setIsModalOpen(false);
       form.resetFields();
     } catch (err: any) {
@@ -126,14 +95,12 @@ export default function WorkforcePage() {
     { title: 'Job Post (City)', dataIndex: 'jobPostLocation', key: 'jobPostLocation', width: 120 },
     { title: 'Actual Work Place', dataIndex: 'actualWorkPlace', key: 'actualWorkPlace', width: 130 },
     { title: 'Specialty', dataIndex: 'specialty', key: 'specialty', width: 120 },
-    { title: 'Marital', dataIndex: 'maritalStatus', key: 'maritalStatus', width: 90, render: (s: string) => s ? <Tag>{s}</Tag> : '-' },
-    { title: 'Salary SAR', dataIndex: 'salary', key: 'salary', width: 100, render: (sal: number) => sal ? `${sal.toLocaleString()} SAR` : '-', sorter: (a: any, b: any) => (a.salary || 0) - (b.salary || 0) },
     {
       title: 'Contract Start (Greg + Hijri)', key: 'contractStart', width: 180,
       render: (_: any, r: any) => {
         const c = contracts.find(cc => cc.employeeId === r.id && (cc.status === 'Active' || cc.status === 'Approved'));
         if (!c) return <Tag color="red">No coverage</Tag>;
-        return <><Text style={{ fontSize: 11 }}>{c.startDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{toHijriShort(c.startDate)} هـ</Text></>;
+        return <><Text style={{ fontSize: 11 }}>{c.startDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{c.startDateHijri || toHijriShort(c.startDate)} هـ</Text></>;
       }
     },
     {
@@ -141,9 +108,13 @@ export default function WorkforcePage() {
       render: (_: any, r: any) => {
         const c = contracts.find(cc => cc.employeeId === r.id && (cc.status === 'Active' || cc.status === 'Approved'));
         if (!c) return '-';
-        return <><Text style={{ fontSize: 11 }}>{c.endDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{toHijriShort(c.endDate)} هـ</Text></>;
+        return <><Text style={{ fontSize: 11 }}>{c.endDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{c.endDateHijri || toHijriShort(c.endDate)} هـ</Text></>;
       }
     },
+
+    // Marital Status and Salary follow Contract End — same order as the onboarding form
+    { title: 'Marital Status', dataIndex: 'maritalStatus', key: 'maritalStatus', width: 110, render: (s: string) => s ? <Tag>{s}</Tag> : '-' },
+    { title: 'Salary (SAR)', dataIndex: 'salary', key: 'salary', width: 120, render: (sal: number) => typeof sal === 'number' ? `${sal.toLocaleString('en-US')} SAR` : '-', sorter: (a: any, b: any) => (a.salary || 0) - (b.salary || 0) },
     {
       title: 'Position', dataIndex: 'position', key: 'position', width: 100,
       render: (pos: string) => {
@@ -234,37 +205,42 @@ export default function WorkforcePage() {
 
           <Row gutter={16}>
             <Col span={8}><Form.Item name="rankGrade" label="Rank/Grade" rules={[{ required: true }]}><Input placeholder="Grade 7" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="nationality" label="Nationality" rules={[{ required: true }]}><Select showSearch placeholder="Select nationality" options={[{ label: 'Saudi', value: 'Saudi' }, { label: 'Egyptian', value: 'Egyptian' }, { label: 'Pakistani', value: 'Pakistani' }, { label: 'Filipino', value: 'Filipino' }, { label: 'Indian', value: 'Indian' }, { label: 'Jordanian', value: 'Jordanian' }, { label: 'American', value: 'American' }, { label: 'British', value: 'British' }]} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="nationality" label="Nationality" rules={[{ required: true }]}><Select showSearch placeholder="Select nationality" options={NATIONALITIES} /></Form.Item></Col>
             <Col span={8}><Form.Item name="jobPostLocation" label="Job Post (Location Assignment) - City" rules={[{ required: true }]}><Input placeholder="Buraydah" /></Form.Item></Col>
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}><Form.Item name="actualWorkPlace" label="Actual Work Place" rules={[{ required: true }]}><Input placeholder="ICU Main" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="specialty" label="Specialty" rules={[{ required: true }]}><Input placeholder="Critical Care" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="maritalStatus" label="Marital Status" rules={[{ required: true }]}><Select placeholder="Select" options={[{ label: 'Single', value: 'Single' }, { label: 'Married', value: 'Married' }, { label: 'Others', value: 'Others' }]} /></Form.Item></Col>
+            <Col span={12}><Form.Item name="actualWorkPlace" label="Actual Work Place" rules={[{ required: true }]}><Input placeholder="ICU Main" /></Form.Item></Col>
+            <Col span={12}><Form.Item name="specialty" label="Specialty" rules={[{ required: true }]}><Input placeholder="Critical Care" /></Form.Item></Col>
           </Row>
 
-          <Row gutter={16}>
-            <Col span={8}><Form.Item name="salary" label="Salary — Amount in SAR" rules={[{ required: true, message: 'Salary required' }]}><InputNumber style={{ width: '100%' }} min={0} placeholder="8500" addonAfter="SAR" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="unitId" label="Nursing Unit (FK)" rules={[{ required: true }]}><Select showSearch options={units.filter(u => u.isActive).map(u => ({ label: `${u.code} - ${u.name}`, value: u.id }))} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="position" label="Position (FK active only)" rules={[{ required: true }]}><Select showSearch options={activePositions.map(p => ({ label: `${p.code} - ${p.fullTitle}`, value: p.code }))} /></Form.Item></Col>
-          </Row>
-
-          <Form.Item name="contactEmail" label="Contact Email" rules={[{ required: true, type: 'email' }]}><Input /></Form.Item>
-
+          {/* Contract Start / Contract End — required Hijri dates. The picker takes the
+              Gregorian date and the Umm al-Qura equivalent is converted and shown; both
+              representations are stored (see addEmployee). */}
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="contractStart" label="Contract Start — Required Hijri Date (Gregorian → Hijri conversion)" rules={[{ required: true }]} extra={contractStartWatch ? `Hijri: ${toHijri(contractStartWatch.toDate())}` : 'Select Gregorian date — Hijri conversion shown automatically via islamic-umalqura calendar'}>
+              <Form.Item name="contractStart" label="Contract Start — Required Hijri Date" rules={[{ required: true, message: 'Contract Start is required' }]} extra={contractStartWatch ? `Hijri: ${toHijri(contractStartWatch)}` : 'Enter the Gregorian date — the Hijri (Umm al-Qura) equivalent is converted automatically'}>
                 <DatePicker style={{ width: '100%' }} placeholder="Select start date" />
               </Form.Item>
-              {contractStartWatch && <Alert type="info" showIcon style={{ marginBottom: 12 }} message={`Hijri Conversion: ${toHijri(contractStartWatch.toDate())}`} />}
+              {contractStartWatch && <Alert type="info" showIcon style={{ marginBottom: 12 }} message={`Hijri: ${toHijri(contractStartWatch)}`} description={`Recorded as ${toHijriIso(contractStartWatch)} هـ  ·  ${contractStartWatch.format('YYYY-MM-DD')}`} />}
             </Col>
             <Col span={12}>
-              <Form.Item name="contractEnd" label="Contract End — Required Hijri Date (Gregorian → Hijri conversion)" rules={[{ required: true }]} extra={contractEndWatch ? `Hijri: ${toHijri(contractEndWatch.toDate())}` : 'Select Gregorian date — Hijri conversion shown automatically'}>
+              <Form.Item name="contractEnd" label="Contract End — Required Hijri Date" rules={[{ required: true, message: 'Contract End is required' }]} extra={contractEndWatch ? `Hijri: ${toHijri(contractEndWatch)}` : 'Enter the Gregorian date — the Hijri (Umm al-Qura) equivalent is converted automatically'}>
                 <DatePicker style={{ width: '100%' }} placeholder="Select end date" />
               </Form.Item>
-              {contractEndWatch && <Alert type="info" showIcon style={{ marginBottom: 12 }} message={`Hijri Conversion: ${toHijri(contractEndWatch.toDate())}`} />}
+              {contractEndWatch && <Alert type="info" showIcon style={{ marginBottom: 12 }} message={`Hijri: ${toHijri(contractEndWatch)}`} description={`Recorded as ${toHijriIso(contractEndWatch)} هـ  ·  ${contractEndWatch.format('YYYY-MM-DD')}`} />}
             </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}><Form.Item name="maritalStatus" label="Marital Status" rules={[{ required: true }]}><Select placeholder="Select" options={MARITAL_STATUSES} /></Form.Item></Col>
+            <Col span={12}><Form.Item name="salary" label="Salary — Amount in Saudi Riyals" rules={[{ required: true, message: 'Salary required' }]}><InputNumber style={{ width: '100%' }} min={0} placeholder="8500" addonAfter="SAR" /></Form.Item></Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={8}><Form.Item name="unitId" label="Nursing Unit (FK)" rules={[{ required: true }]}><Select showSearch options={units.filter(u => u.isActive).map(u => ({ label: `${u.code} - ${u.name}`, value: u.id }))} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="position" label="Position (FK active only)" rules={[{ required: true }]}><Select showSearch options={activePositions.map(p => ({ label: `${p.code} - ${p.fullTitle}`, value: p.code }))} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="contactEmail" label="Contact Email" rules={[{ required: true, type: 'email' }]}><Input placeholder="name@aigh.sa" /></Form.Item></Col>
           </Row>
         </Form>
       </Modal>

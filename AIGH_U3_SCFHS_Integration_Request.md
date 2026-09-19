@@ -4,7 +4,7 @@
 **Purpose:** obtain an SCFHS electronic-verification integration agreement before the Phase 3 pilot.
 **Owner:** Medical Director · **Escalation:** Hospital General Director
 **Deadline:** **submit by Week 2** — agreements typically take 4–12 weeks; the Phase 3 gate needs nightly sync running against 10+ practitioner records.
-**Status:** prepared 18 September 2026 · specification rev 2.8.7b
+**Status:** prepared 18 September 2026 · specification rev 2.8.7c
 
 > **Nothing is waiting on this.** The integration service scaffold and the resilience layer (circuit breaker, sync-state tracking, stale/failed/pending status) can be built now against mock responses. When the agreement and certificates arrive, integration becomes a configuration change rather than a development sprint.
 

@@ -1,4 +1,4 @@
-# CRUD Proposal — User Role Matrix (AIGH NurseApp v2.8.7b §8)
+# CRUD Proposal — User Role Matrix (AIGH NurseApp v2.8.7c §8)
 
 > Goal: Allow HR_ADMIN / SYSTEM_ADMIN to explicitly assign, scope, time-box, and revoke application authorization roles, without ever auto-conferring admin from position title. All operations server-evaluated, Four-Eyes for SYSTEM_ADMIN promotion, JIT elevation, audit hash-chained, Redis non-authoritative.
 

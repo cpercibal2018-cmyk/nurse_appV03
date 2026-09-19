@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED } from '../data/seed';
+import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED, UNASSIGNED_UNIT_ID } from '../data/seed';
 import { toHijriIso } from './hijri';
+import { providesCoverage, periodsOverlap, checkContractCopyCandidate } from './contracts';
 
 export type Employee = {
   id: number;
@@ -35,6 +36,45 @@ export type Contract = {
   startDateHijri?: string; // Umm al-Qura equivalent of startDate (YYYY-MM-DD Hijri), recorded at entry
   endDateHijri?: string;   // Umm al-Qura equivalent of endDate (YYYY-MM-DD Hijri), recorded at entry
   status: 'Draft' | 'PendingApproval' | 'Approved' | 'Active' | 'Expired' | 'Suspended' | 'Terminated' | 'Superseded';
+  /** Versioned contract-copy attachments, oldest first. Never overwritten (spec §5.3.1). */
+  contractCopy?: ContractAttachment[];
+};
+
+/** A file descriptor the store can validate without any DOM File API. */
+export type AttachmentPayload = { name: string; type: string; bytes: Uint8Array };
+
+export type ContractAttachment = {
+  id: string;
+  version: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  uploadedBy: number | null;
+  /** §5.3.2 — no unscanned file is downloadable. */
+  scanStatus: 'PENDING' | 'CLEAN' | 'INFECTED';
+  /** Where the bytes live in the real system (V41 secure-vault storage_key). */
+  storageKey: string;
+};
+
+// The cap lives in the shared rules module so the picker and this guard use one number.
+export { MAX_CONTRACT_COPY_BYTES } from './contracts';
+
+/**
+ * Attachment bytes, deliberately held OUTSIDE the zustand store. `partialize`
+ * persists `contracts` to localStorage, so putting the bytes on the contract row
+ * would push a base64 PDF into a ~5 MB quota on the first upload. Only metadata
+ * is persisted; the bytes live here for the session, exactly as the real system
+ * keeps them in the secure vault rather than the application database.
+ */
+const contractCopyBytes = new Map<string, Uint8Array>();
+
+/** §5.3.2: an unscanned file is never handed out — anything not CLEAN throws. */
+export const getContractCopyBytes = (attachmentId: string, scanStatus: string): Uint8Array => {
+  if (scanStatus !== 'CLEAN') throw new Error(`SCAN_NOT_CLEAN: attachment ${attachmentId} is ${scanStatus} — an unscanned or infected file is never downloadable (§5.3.2)`);
+  const bytes = contractCopyBytes.get(attachmentId);
+  if (!bytes) throw new Error(`ATTACHMENT_BYTES_UNAVAILABLE: ${attachmentId} — bytes live in the session vault and are not persisted across reloads`);
+  return bytes;
 };
 
 export type Credential = {
@@ -151,10 +191,14 @@ type Store = {
   addEmployee: (emp: Omit<Employee, 'id'> & { contractStart: string; contractEnd: string }) => number;
   updateEmployee: (id: number, data: Partial<Employee>) => void;
   deleteEmployee: (id: number) => void;
+  /** HR_ADMIN only — writing employees.position is an Employee Master write (spec §8.1). */
+  assignPosition: (args: { employeeId: number; positionCode: string; reason?: string }) => { previous: string; positionCode: string };
 
   // contracts
   contracts: Contract[];
-  addContract: (contract: Omit<Contract, 'id'>) => void;
+  addContract: (contract: Omit<Contract, 'id'>) => number;
+  /** HR_ADMIN only — contract attachments are HR Admin scoped (spec §4.2). */
+  attachContractCopy: (args: { contractId: number; file: AttachmentPayload }) => ContractAttachment;
   updateContract: (id: number, data: Partial<Contract>) => void;
 
   // credentials
@@ -210,6 +254,32 @@ function simpleHash(str: string): string {
   return Math.abs(hash).toString(16).padStart(8, '0') + Date.now().toString(16);
 }
 
+/**
+ * The demo data shipped formatted identifiers before 2.8.7c — File No. as
+ * 'F-1001' and Job Number as 'AIGH-1001'. Neither field carries a format rule
+ * any more, but the store is persisted to localStorage, so a session that saved
+ * the old rows keeps replaying them no matter what `seed.ts` says. Stripping the
+ * retired prefixes on rehydrate is what lets the change reach an already-open
+ * browser instead of only a freshly cleared one. Only a leading 'F-' or 'AIGH-'
+ * is removed; any other shape HR typed is left exactly as entered.
+ */
+export const stripRetiredIdentifierPrefix = (value?: string): string | undefined =>
+  typeof value === 'string' ? value.replace(/^\s*(?:F|AIGH)-/i, '') : value;
+
+export const normalizePersistedEmployees = <T extends { fileNo?: string; jobNumber?: string }>(
+  employees: T[] | undefined
+): T[] | undefined =>
+  Array.isArray(employees)
+    ? employees.map((e) => ({
+        ...e,
+        fileNo: stripRetiredIdentifierPrefix(e?.fileNo),
+        jobNumber: stripRetiredIdentifierPrefix(e?.jobNumber),
+      }))
+    : employees;
+
+/** Bumped whenever a `migrate` step is added; persisted data at an older version is migrated on rehydrate. */
+export const STORE_VERSION = 1;
+
 export const useStore = create<Store>()(
   persist(
     (set, get) => ({
@@ -220,7 +290,10 @@ export const useStore = create<Store>()(
       login: (email, password) => {
         // mock auth - any password works for demo, but check email pattern
         if (!email.includes('@')) return false;
-        const role = email.includes('admin') ? 'SYSTEM_ADMIN' : email.includes('hr') ? 'HR_ADMIN' : email.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
+        // 'hr' must be tested before 'admin': the documented HR demo account is
+        // hr.admin@aigh.sa, and testing 'admin' first silently signed it in as
+        // SYSTEM_ADMIN, which an HR_ADMIN-only gate then rejects.
+        const role = email.includes('hr') ? 'HR_ADMIN' : email.includes('admin') ? 'SYSTEM_ADMIN' : email.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
         const user = { id: 1, name: email.split('@')[0], role, email };
         set({ isAuthenticated: true, currentUser: user, csrfToken: Math.random().toString(36).substring(2) });
         get().addAuditEntry({ actorId: 1, action: 'LOGIN', resource: 'auth', resourceId: '1', changes: { email } });
@@ -373,9 +446,13 @@ export const useStore = create<Store>()(
         // Duplicate job number triggers full rollback via DB unique constraint
         if (!emp.jobNumber || String(emp.jobNumber).trim().length === 0) throw new Error('Job Number is required — from contract to be entered');
         if (state.employees.find(e => String(e.jobNumber).toLowerCase() === String(emp.jobNumber).toLowerCase() && !e.deletedAt)) throw new Error(`Duplicate job number — job number is from contract and must be unique: ${emp.jobNumber}`);
-        // unit exists
-        const unit = state.units.find(u => u.id === emp.unitId && u.isActive);
-        if (!unit) throw new Error('Invalid unit');
+        // unit exists — unless the employee is deliberately left Unassigned (id 0),
+        // the onboarding default. Unassigned is a sentinel, not a directory row, so
+        // it must not be looked up in `units`.
+        if (emp.unitId !== UNASSIGNED_UNIT_ID) {
+          const unit = state.units.find(u => u.id === emp.unitId && u.isActive);
+          if (!unit) throw new Error('Invalid unit');
+        }
 
         // Validate contract dates — start/end inclusive, next non-overlapping renewal starts after previous end
         const start = new Date(emp.contractStart);
@@ -457,20 +534,194 @@ export const useStore = create<Store>()(
         employees: s.employees.map(e => e.id === id ? { ...e, deletedAt: new Date().toISOString() } : e)
       })),
 
+      /**
+       * Position Assignment — set an existing employee's position from the
+       * Position Directory screen.
+       *
+       * RBAC, checked here rather than in the screen so it holds for every
+       * caller. Writing `employees.position` is an Employee Master source field,
+       * which spec §8.1 grants to HR Admin ("Maintain source fields within
+       * scope"). Supervisor/Scheduler gets an assigned-unit read view only and
+       * Employee gets own profile and phone only, so neither may assign.
+       *
+       * Spec §8.2: assigning a position never confers an authorization role.
+       * DON, DEPUTY_DON, ADMIN, NS and ACTING_HEAD all keep staff self-service
+       * until HR separately grants an elevated role and scope, so this action
+       * deliberately touches no role assignment.
+       */
+      assignPosition: ({ employeeId, positionCode, reason }) => {
+        const state = get();
+
+        if (state.currentUser?.role !== 'HR_ADMIN') {
+          throw new Error(
+            `FORBIDDEN: position assignment is an Employee Master write (spec §8.1) and requires HR_ADMIN — ` +
+            `current role is ${state.currentUser?.role ?? 'none (not signed in)'}`
+          );
+        }
+
+        const employee = state.employees.find(e => e.id === employeeId);
+        if (!employee || employee.deletedAt) throw new Error(`EMPLOYEE_NOT_FOUND: employee ${employeeId} does not exist or is deleted`);
+
+        const position = state.positions.find(p => p.code === positionCode);
+        if (!position) throw new Error(`POSITION_NOT_FOUND: ${positionCode}`);
+        if (!position.isActive) throw new Error(`POSITION_NOT_ACTIVE: ${positionCode} is deprecated — migrate it to its replacement before assigning`);
+        if (employee.position === positionCode) throw new Error(`POSITION_UNCHANGED: ${employee.name} already holds ${positionCode}`);
+
+        const previous = employee.position;
+        set((s) => ({
+          employees: s.employees.map(e => e.id === employeeId ? { ...e, position: positionCode } : e),
+        }));
+        get().addAuditEntry({
+          actorId: state.currentUser?.id || 1,
+          action: 'POSITION_ASSIGNED',
+          resource: 'employees',
+          resourceId: String(employeeId),
+          // authRoleGranted is recorded as null on purpose: §8.2 says the title
+          // never auto-confers a role, so the audit row must show that none was.
+          changes: { position: { from: previous, to: positionCode }, reason: reason || null, authRoleGranted: null },
+        });
+        return { previous, positionCode };
+      },
+
       contracts: CONTRACTS_SEED as Contract[],
-      addContract: (contract) => set((s) => ({
-        contracts: [...s.contracts, {
-          ...contract,
-          // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
-          // the onboarding path, so every contract carries both calendars.
-          startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
-          endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
-          id: Math.max(0, ...s.contracts.map(c => c.id)) + 1,
-        }]
-      })),
-      updateContract: (id, data) => set((s) => ({
-        contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
-      })),
+      // Contract guards live in the store, not in a screen, so they hold no
+      // matter which caller creates or changes a contract. They mirror the
+      // database rules: the employee foreign key and the GiST exclusion
+      // constraint over Approved/Active periods for the same employee.
+      addContract: (contract) => {
+        const state = get();
+
+        // 1. Existence — the employee must exist and not be soft-deleted.
+        const employee = state.employees.find(e => e.id === contract.employeeId && !e.deletedAt);
+        if (!employee) {
+          throw new Error(`EMPLOYEE_NOT_FOUND: no active employee ${contract.employeeId} — a contract cannot be created for someone who has not been onboarded`);
+        }
+
+        // 2. Dates — present, parseable, and ordered (start/end inclusive).
+        const start = new Date(contract.startDate);
+        const end = new Date(contract.endDate);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) throw new Error('Invalid contract dates');
+        if (end <= start) throw new Error('Contract end must be after start — inclusive dates');
+
+        // 3. Overlap — rejected only when the new contract itself provides coverage.
+        if (providesCoverage(contract.status)) {
+          const clash = state.contracts.find(cc =>
+            cc.employeeId === contract.employeeId &&
+            providesCoverage(cc.status) &&
+            periodsOverlap(contract.startDate, contract.endDate, cc.startDate, cc.endDate));
+          if (clash) {
+            throw new Error(`CONTRACT_PERIOD_OVERLAP: employee ${employee.jobNumber} already has a ${clash.status} contract ${clash.startDate} → ${clash.endDate}. Overlapping Approved/Active periods are rejected; the next renewal starts the day after the previous end.`);
+          }
+        }
+
+        const newId = Math.max(0, ...state.contracts.map(c => c.id)) + 1;
+        set((s) => ({
+          contracts: [...s.contracts, {
+            ...contract,
+            // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
+            // the onboarding path, so every contract carries both calendars.
+            startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
+            endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
+            id: newId,
+          }]
+        }));
+        return newId;
+      },
+
+      /**
+       * Attach the signed contract copy (PDF) to a contract.
+       *
+       * Spec §4.2: contract attachments sit with "create, approval, renewal,
+       * termination; full contract history and attachments", which is HR Admin /
+       * System Admin — Supervisor and Employee get a reduced read view with no
+       * evidence downloads, so neither may attach. The gate lives here rather
+       * than in the screen so it holds for every caller.
+       *
+       * §5.3.1: attachments are versioned and historical bytes are never
+       * overwritten, so this always appends a new version.
+       * §5.3.2: the content type is verified against the PDF magic bytes, not
+       * just the declared MIME type, before the row is marked CLEAN.
+       */
+      attachContractCopy: ({ contractId, file }) => {
+        const state = get();
+
+        if (state.currentUser?.role !== 'HR_ADMIN') {
+          throw new Error(
+            `FORBIDDEN: contract attachments are HR Admin scoped (spec §4.2) and require HR_ADMIN — ` +
+            `current role is ${state.currentUser?.role ?? 'none (not signed in)'}`
+          );
+        }
+
+        const contract = state.contracts.find(c => c.id === contractId);
+        if (!contract) throw new Error(`CONTRACT_NOT_FOUND: ${contractId}`);
+
+        // Same rule the picker applies, with the bytes present so the content
+        // check runs. A file renamed to .pdf still is not a PDF.
+        const verdict = checkContractCopyCandidate({ name: file.name, type: file.type, head: file.bytes });
+        if (!verdict.ok) throw new Error(`${verdict.code}: ${verdict.message}`);
+
+        const previous = contract.contractCopy ?? [];
+        const version = previous.length + 1;
+        const id = `cca_${contractId}_v${version}`;
+        const attachment: ContractAttachment = {
+          id,
+          version,
+          fileName: file.name,
+          mimeType: 'application/pdf',
+          sizeBytes: file.bytes.length,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: state.currentUser?.id ?? null,
+          // The magic-byte check above is this mock's stand-in for the ClamAV
+          // quarantine worker, which in the real pipeline leaves the row PENDING
+          // until the scan finishes.
+          scanStatus: 'CLEAN',
+          storageKey: `vault/contracts/${contractId}/v${version}/${file.name}`,
+        };
+
+        contractCopyBytes.set(id, file.bytes);
+        set((s) => ({
+          contracts: s.contracts.map(c => c.id === contractId ? { ...c, contractCopy: [...(c.contractCopy ?? []), attachment] } : c),
+        }));
+        get().addAuditEntry({
+          actorId: state.currentUser?.id ?? null,
+          action: 'CONTRACT_COPY_ATTACHED',
+          resource: 'contracts',
+          resourceId: String(contractId),
+          changes: { attachmentId: id, version, fileName: file.name, sizeBytes: file.bytes.length, scanStatus: 'CLEAN', storageKey: attachment.storageKey },
+        });
+        return attachment;
+      },
+      updateContract: (id, data) => {
+        const state = get();
+        const current = state.contracts.find(c => c.id === id);
+        if (!current) throw new Error(`CONTRACT_NOT_FOUND: ${id}`);
+
+        const nextStatus = data.status ?? current.status;
+        const nextStart = data.startDate ?? current.startDate;
+        const nextEnd = data.endDate ?? current.endDate;
+
+        // The same exclusion rule applies when a change moves the contract into
+        // a coverage status or re-dates it while it already provides coverage.
+        if (providesCoverage(nextStatus)) {
+          const start = new Date(nextStart);
+          const end = new Date(nextEnd);
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) throw new Error('Invalid contract dates');
+          if (end <= start) throw new Error('Contract end must be after start — inclusive dates');
+
+          const clash = state.contracts.find(cc =>
+            cc.id !== id &&
+            cc.employeeId === current.employeeId &&
+            providesCoverage(cc.status) &&
+            periodsOverlap(nextStart, nextEnd, cc.startDate, cc.endDate));
+          if (clash) {
+            throw new Error(`CONTRACT_PERIOD_OVERLAP: contract ${id} would overlap the ${clash.status} contract ${clash.startDate} → ${clash.endDate} for the same employee.`);
+          }
+        }
+
+        set((s) => ({
+          contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
+        }));
+      },
 
       credentials: [
         { id: 1, employeeId: 1, templateId: 5, validityStatus: 'Valid', issueDate: '2023-01-01', expiryDate: '2026-06-01', trackingData: { scfhs_number: 'SCFHS-001' }, syncStatus: 'SYNCED', lastSyncAttempt: new Date().toISOString() },
@@ -650,6 +901,15 @@ export const useStore = create<Store>()(
     }),
     {
       name: 'aigh-workforce-storage',
+      version: STORE_VERSION,
+      // Sessions persisted before 2.8.7c hold the formatted demo identifiers.
+      // Without this step localStorage silently outranks seed.ts and an
+      // already-open browser never sees the plain File No.
+      migrate: (persistedState) => {
+        const persisted = persistedState as { employees?: Employee[] } | undefined;
+        if (!persisted) return persistedState as Store;
+        return { ...persisted, employees: normalizePersistedEmployees(persisted.employees) } as Store;
+      },
       partialize: (state) => ({
         departments: state.departments,
         units: state.units,

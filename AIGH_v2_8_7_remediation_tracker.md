@@ -2,13 +2,13 @@
 
 **Companion documents:**
 - `AIGH_v2_8_6_review_analysis.md` — the independent review (finding IDs F-01…F-32 used throughout); each finding now carries its **closure status** (32/32 closed)
-- `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` — the corrected specification (rev **2.8.7b**)
+- `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` — the corrected specification (rev **2.8.7c**)
 - `AIGH_Phase1_Execution_Plan_U1_Unblock.md` — Gate 1 sandbox, decision sprint and default-if-silent rule that take U1 off the critical path
 - `AIGH_U1_Hosting_Decision_Pack.md` — requirements brief, options, scored matrix and signature-ready decision memo (for the CIO)
 - `AIGH_U2_Credential_Policy_Workshop_Pack.md` — 90-minute agenda, rule decision tables, grace-period defaults and policy memo (for the Director of Nursing)
 - `AIGH_U3_SCFHS_Integration_Request.md` — Arabic and English request letters, technical annex and follow-up cadence (for the Medical Director)
-- `patch_v287.py`, `patch2_v287.py`, `patch3_v287.py`, `patch4_v287.py` — re-runnable generators for all corrections (2.8.7, 2.8.7a, 2.8.7b); replaying them against the untouched v2.8.6 source reproduces this document byte-for-byte (proven by `python3 replay_v287.py`)
-- `verify_integration.py` — asserts that all 32 review findings are present in the specification (currently 32/32)
+- `patch_v287.py`, `patch2_v287.py`, `patch3_v287.py`, `patch4_v287.py`, `patch5_v287.py` — re-runnable generators for all corrections (2.8.7, 2.8.7a, 2.8.7b); replaying them against the untouched v2.8.6 source reproduces this document byte-for-byte (proven by `python3 replay_v287.py`)
+- `verify_integration.py` — asserts that all 38 review findings are present in the specification (currently 32/32)
 - `wave1a-kit/` — **reference implementations for the Wave 1A tasks** (22 files, ~2,340 lines) with a dependency-free verifier: `cd wave1a-kit && node scripts/verify-kit.mjs .` → 44/44 checks pass
 - `AIGH_v2_8_7_integration_verification.md` — the integration verification report
 
@@ -134,8 +134,9 @@ All 32 review findings are addressed in the document. Twenty-eight are closed ou
 | **2.8.7a amendment** (`patch3_v287.py`) — capacity as runtime configuration (bulk API + CSV import + grid), robust acceptance wording, KSA region allowlist correction | 9 / 9 patched |
 | **2.8.7b amendment** (`patch4_v287.py`) — backup/restore script corrections (closes F-23) | 11 / 11 patched |
 | **Full replay test** — v2.8.6 source → patch1 → patch2 → patch3 → patch4 | **Byte-identical** to the delivered v2.8.7 file (MD5 match); zero drift |
-| **Finding coverage** (`verify_integration.py`) | **32 / 32 integrated, 0 open** |
-| Total patches across all four passes | **102** (41 + 40 + 9 + 12) |
+| **Finding coverage** (`verify_integration.py`) | **38 / 38 integrated, 0 open** |
+| **2.8.7c amendment** (`patch5_v287.py`) — employee record shape and contract guards (closes F-33–F-38) | 11 / 11 patches applied |
+| Total patches across all five passes | **113** (41 + 40 + 9 + 12 + 11) |
 
 ---
 

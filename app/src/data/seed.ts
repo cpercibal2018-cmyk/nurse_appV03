@@ -6,6 +6,22 @@ export const DEPARTMENTS = [
   { id: 5, code: 'CORP', name: 'Administrative & Corporate Services', description: 'Nursing admin, HR, infection control and support services', isActive: true, createdAt: '2026-01-01' },
 ];
 
+/**
+ * Sentinel value, deliberately NOT a row in NURSING_UNITS. "Unassigned" means the
+ * employee exists but has not been placed in a unit yet. Adding it to the
+ * directory would break the seeded baseline the specification asserts (47 nursing
+ * units / 582 beds) and that `verify_integration.py` F-01 machine-checks, and it
+ * would put a bedless pseudo-unit into the Hospital Master Unit Directory.
+ */
+export const UNASSIGNED_UNIT_ID = 0;
+
+/**
+ * The onboarding form starts on SN — Staff Nurse: the frontline clinical position
+ * (active, tier Clinical, schedulable, displayOrder 10), which is what most
+ * onboardings are. HR can still pick any active position.
+ */
+export const DEFAULT_ONBOARD_POSITION = 'SN';
+
 export const NURSING_UNITS = [
   // EMAC 133
   { id: 1, code: 'ER_MAIN', name: 'ER Main / Adult', departmentId: 1, bedCount: 39, isActive: true, description: 'Primary triage and emergency care for adults' },
@@ -108,14 +124,14 @@ export const CREDENTIAL_TEMPLATES = [
 ];
 
 export const EMPLOYEES_SEED = [
-  { id: 1, firstName: 'Sarah', middleName: 'Ahmed', lastName: 'Al-Harbi', name: 'Sarah Ahmed Al-Harbi', jobNumber: '1001', jobTitle: 'Registered Nurse', fileNo: 'F-1001', rankGrade: 'Grade 7', nationality: 'Saudi', jobPostLocation: 'Buraydah', actualWorkPlace: 'ICU Main', specialty: 'Critical Care', maritalStatus: 'Single', salary: 8500, unitId: 13, position: 'SN', contactEmail: 'sarah.ahmed@aigh.sa', status: 'Active', hireDate: '2023-01-15' },
-  { id: 2, firstName: 'Mohammed', middleName: 'Al-Rashid', lastName: 'Al-Qahtani', name: 'Mohammed Al-Rashid Al-Qahtani', jobNumber: '1002', jobTitle: 'Head Nurse', fileNo: 'F-1002', rankGrade: 'Grade 9', nationality: 'Saudi', jobPostLocation: 'Buraydah', actualWorkPlace: 'Inpatient Wards', specialty: 'Medical-Surgical', maritalStatus: 'Married', salary: 12000, unitId: 21, position: 'HN', contactEmail: 'm.alrashid@aigh.sa', status: 'Active', hireDate: '2022-06-01' },
-  { id: 3, firstName: 'Fatima', middleName: '', lastName: 'Zahra', name: 'Fatima Zahra', jobNumber: '2003', jobTitle: 'Charge Nurse', fileNo: 'F-2003', rankGrade: 'Grade 8', nationality: 'Egyptian', jobPostLocation: 'Unaizah', actualWorkPlace: 'NICU', specialty: 'Neonatal', maritalStatus: 'Married', salary: 9500, unitId: 15, position: 'CN', contactEmail: 'fatima.z@aigh.sa', status: 'Active', hireDate: '2023-03-10' },
-  { id: 4, firstName: 'John', middleName: 'Michael', lastName: 'Smith', name: 'John Michael Smith', jobNumber: '2004', jobTitle: 'Staff Nurse', fileNo: 'F-2004', rankGrade: 'Grade 7', nationality: 'American', jobPostLocation: 'Buraydah', actualWorkPlace: 'ER Main', specialty: 'Emergency', maritalStatus: 'Single', salary: 9000, unitId: 1, position: 'SN', contactEmail: 'john.smith@aigh.sa', status: 'Active', hireDate: '2024-01-20' },
-  { id: 5, firstName: 'Aisha', middleName: 'Khan', lastName: 'Al-Otaibi', name: 'Aisha Khan Al-Otaibi', jobNumber: '3005', jobTitle: 'Nurse Practitioner', fileNo: 'F-3005', rankGrade: 'Grade 10', nationality: 'Pakistani', jobPostLocation: 'Buraydah', actualWorkPlace: 'ICU Main', specialty: 'Critical Care', maritalStatus: 'Married', salary: 14000, unitId: 13, position: 'PRACTITIONER', contactEmail: 'aisha.khan@aigh.sa', status: 'Active', hireDate: '2021-11-05' },
-  { id: 6, firstName: 'Omar', middleName: 'Hassan', lastName: 'Al-Dosari', name: 'Omar Hassan Al-Dosari', jobNumber: '3006', jobTitle: 'Staff Nurse', fileNo: 'F-3006', rankGrade: 'Grade 7', nationality: 'Saudi', jobPostLocation: 'Ar Rass', actualWorkPlace: 'Operating Room', specialty: 'Surgical', maritalStatus: 'Single', salary: 8500, unitId: 8, position: 'SN', contactEmail: 'omar.hassan@aigh.sa', status: 'Active', hireDate: '2023-07-12' },
-  { id: 7, firstName: 'Layla', middleName: '', lastName: 'Mahmoud', name: 'Layla Mahmoud', jobNumber: '4007', jobTitle: 'Midwife', fileNo: 'F-4007', rankGrade: 'Grade 8', nationality: 'Jordanian', jobPostLocation: 'Buraydah', actualWorkPlace: 'Labor and Delivery', specialty: 'Obstetrics', maritalStatus: 'Married', salary: 10000, unitId: 25, position: 'MW', contactEmail: 'layla.m@aigh.sa', status: 'Active', hireDate: '2022-09-18' },
-  { id: 8, firstName: 'David', middleName: '', lastName: 'Lee', name: 'David Lee', jobNumber: '4008', jobTitle: 'Nursing Supervisor', fileNo: 'F-4008', rankGrade: 'Grade 11', nationality: 'British', jobPostLocation: 'Buraydah', actualWorkPlace: 'Nursing Admin', specialty: 'Management', maritalStatus: 'Married', salary: 15000, unitId: 21, position: 'NS', contactEmail: 'david.lee@aigh.sa', status: 'Active', hireDate: '2020-05-22' },
+  { id: 1, firstName: 'Sarah', middleName: 'Ahmed', lastName: 'Al-Harbi', name: 'Sarah Ahmed Al-Harbi', jobNumber: '1001', jobTitle: 'Registered Nurse', fileNo: '1001', rankGrade: 'Grade 7', nationality: 'Saudi', jobPostLocation: 'Buraydah', actualWorkPlace: 'ICU Main', specialty: 'Critical Care', maritalStatus: 'Single', salary: 8500, unitId: 13, position: 'SN', contactEmail: 'sarah.ahmed@aigh.sa', status: 'Active', hireDate: '2023-01-15' },
+  { id: 2, firstName: 'Mohammed', middleName: 'Al-Rashid', lastName: 'Al-Qahtani', name: 'Mohammed Al-Rashid Al-Qahtani', jobNumber: '1002', jobTitle: 'Head Nurse', fileNo: '1002', rankGrade: 'Grade 9', nationality: 'Saudi', jobPostLocation: 'Buraydah', actualWorkPlace: 'Inpatient Wards', specialty: 'Medical-Surgical', maritalStatus: 'Married', salary: 12000, unitId: 21, position: 'HN', contactEmail: 'm.alrashid@aigh.sa', status: 'Active', hireDate: '2022-06-01' },
+  { id: 3, firstName: 'Fatima', middleName: '', lastName: 'Zahra', name: 'Fatima Zahra', jobNumber: '2003', jobTitle: 'Charge Nurse', fileNo: '2003', rankGrade: 'Grade 8', nationality: 'Egyptian', jobPostLocation: 'Unaizah', actualWorkPlace: 'NICU', specialty: 'Neonatal', maritalStatus: 'Married', salary: 9500, unitId: 15, position: 'CN', contactEmail: 'fatima.z@aigh.sa', status: 'Active', hireDate: '2023-03-10' },
+  { id: 4, firstName: 'John', middleName: 'Michael', lastName: 'Smith', name: 'John Michael Smith', jobNumber: '2004', jobTitle: 'Staff Nurse', fileNo: '2004', rankGrade: 'Grade 7', nationality: 'American', jobPostLocation: 'Buraydah', actualWorkPlace: 'ER Main', specialty: 'Emergency', maritalStatus: 'Single', salary: 9000, unitId: 1, position: 'SN', contactEmail: 'john.smith@aigh.sa', status: 'Active', hireDate: '2024-01-20' },
+  { id: 5, firstName: 'Aisha', middleName: 'Khan', lastName: 'Al-Otaibi', name: 'Aisha Khan Al-Otaibi', jobNumber: '3005', jobTitle: 'Nurse Practitioner', fileNo: '3005', rankGrade: 'Grade 10', nationality: 'Pakistani', jobPostLocation: 'Buraydah', actualWorkPlace: 'ICU Main', specialty: 'Critical Care', maritalStatus: 'Married', salary: 14000, unitId: 13, position: 'PRACTITIONER', contactEmail: 'aisha.khan@aigh.sa', status: 'Active', hireDate: '2021-11-05' },
+  { id: 6, firstName: 'Omar', middleName: 'Hassan', lastName: 'Al-Dosari', name: 'Omar Hassan Al-Dosari', jobNumber: '3006', jobTitle: 'Staff Nurse', fileNo: '3006', rankGrade: 'Grade 7', nationality: 'Saudi', jobPostLocation: 'Ar Rass', actualWorkPlace: 'Operating Room', specialty: 'Surgical', maritalStatus: 'Single', salary: 8500, unitId: 8, position: 'SN', contactEmail: 'omar.hassan@aigh.sa', status: 'Active', hireDate: '2023-07-12' },
+  { id: 7, firstName: 'Layla', middleName: '', lastName: 'Mahmoud', name: 'Layla Mahmoud', jobNumber: '4007', jobTitle: 'Midwife', fileNo: '4007', rankGrade: 'Grade 8', nationality: 'Jordanian', jobPostLocation: 'Buraydah', actualWorkPlace: 'Labor and Delivery', specialty: 'Obstetrics', maritalStatus: 'Married', salary: 10000, unitId: 25, position: 'MW', contactEmail: 'layla.m@aigh.sa', status: 'Active', hireDate: '2022-09-18' },
+  { id: 8, firstName: 'David', middleName: '', lastName: 'Lee', name: 'David Lee', jobNumber: '4008', jobTitle: 'Nursing Supervisor', fileNo: '4008', rankGrade: 'Grade 11', nationality: 'British', jobPostLocation: 'Buraydah', actualWorkPlace: 'Nursing Admin', specialty: 'Management', maritalStatus: 'Married', salary: 15000, unitId: 21, position: 'NS', contactEmail: 'david.lee@aigh.sa', status: 'Active', hireDate: '2020-05-22' },
 ];
 
 export const CONTRACTS_SEED = [

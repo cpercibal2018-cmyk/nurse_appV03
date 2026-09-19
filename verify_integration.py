@@ -39,6 +39,12 @@ checks = [
  ("F-30 criterion",       ["credential custody and pipeline scope"], []),
  ("F-31 §12 counts",      ["Thirty-nine sections"], ["Thirty subsystems"]),
  ("F-32 contents",        ["2.8.7 note:"], []),
+ ("F-33 job number format", ["**No format rule**","plain number (`1001`)","neither required nor enforced","no `CHECK` constraint may reintroduce it"], ["AIGH-XXXX pattern is required","format AIGH-XXXX, 4 digits"]),
+ ("F-34 employee record",   ["**Employee record (2.8.7c).**","`first_name`","trg_employees_compose_full_name","V50_employee_hr_fields.sql","Job Post (Location Assignment) — City","Marital Status","Amount in Saudi Riyals"], ["p_name, p_job_number, p_unit_id, p_position, p_contact_email, now()"]),
+ ("F-35 onboarding fn 2.8.7c", ["p_first_name VARCHAR","p_middle_name VARCHAR","p_last_name VARCHAR","p_marital_status VARCHAR","p_salary NUMERIC","${dto.firstName}"], ["p_name VARCHAR,\n    p_job_number VARCHAR","${dto.name},"]),
+ ("F-36 hijri contract dates", ["start_date_hijri","end_date_hijri","islamic-umalqura","recorded in both calendars (2.8.7c)","stored rather than recomputed"], []),
+ ("F-37 contract guards",   ["EMPLOYEE_NOT_FOUND","CONTRACT_PERIOD_OVERLAP","must not live only in a UI component","Guards belong to the service layer"], []),
+ ("F-38 renewal prefill",   ["**Renewal entry (2.8.7c).**","starts the day after the previous end and runs for the same length","prefilled dates remain editable"], []),
 ]
 integrated, open_items = [], []
 for name, present, absent in checks:

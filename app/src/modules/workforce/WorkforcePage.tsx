@@ -3,6 +3,7 @@ import { Card, Table, Button, Tag, Space, Input, Select, Modal, Form, message, T
 import { PlusOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
 import { toHijri, toHijriShort, toHijriIso } from '../../lib/hijri';
+import { UNASSIGNED_UNIT_ID, DEFAULT_ONBOARD_POSITION } from '../../data/seed';
 
 const { Title, Text } = Typography;
 
@@ -182,7 +183,7 @@ export default function WorkforcePage() {
         width={900}
         destroyOnClose
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" initialValues={{ unitId: UNASSIGNED_UNIT_ID, position: DEFAULT_ONBOARD_POSITION }}>
           <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="Demo Employee — Job Number plain + Auto Full Name + Hijri Conversion" description="Job Number plain numbers or text+number combination (no AIGH- prefix) — e.g. 1001, AIGH1002. Full Name auto = First + Middle + Last. Contract Start/End show Gregorian + Hijri conversion via Intl islamic-umalqura." />
 
           <Row gutter={16}>
@@ -200,7 +201,7 @@ export default function WorkforcePage() {
               <Form.Item name="jobNumber" label="Job Number (from Contract — Unique)" extra="Plain format — plain numbers or text+number combination (e.g. 1001, 2003, AIGH1002, EMP2004), no AIGH- prefix, unique, from contract to be entered." rules={[{ required: true, message: 'Job Number required — plain format' }]}><Input placeholder="1001 or AIGH1002 or EMP2004" /></Form.Item>
             </Col>
             <Col span={8}><Form.Item name="jobTitle" label="Job Title" rules={[{ required: true, message: 'Job Title required' }]}><Input placeholder="Registered Nurse" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="fileNo" label="File No." rules={[{ required: true }]}><Input placeholder="F-1001" /></Form.Item></Col>
+            <Col span={8}><Form.Item name="fileNo" label="File No." rules={[{ required: true }]}><Input placeholder="1001" /></Form.Item></Col>
           </Row>
 
           <Row gutter={16}>
@@ -238,8 +239,8 @@ export default function WorkforcePage() {
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}><Form.Item name="unitId" label="Nursing Unit (FK)" rules={[{ required: true }]}><Select showSearch options={units.filter(u => u.isActive).map(u => ({ label: `${u.code} - ${u.name}`, value: u.id }))} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="position" label="Position (FK active only)" rules={[{ required: true }]}><Select showSearch options={activePositions.map(p => ({ label: `${p.code} - ${p.fullTitle}`, value: p.code }))} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="unitId" label="Nursing Unit (FK) — defaults to Unassigned" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={[{ label: 'Unassigned — not yet placed in a unit', value: UNASSIGNED_UNIT_ID }, ...units.filter(u => u.isActive).map(u => ({ label: `${u.code} - ${u.name}`, value: u.id }))]} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="position" label="Position (FK active only) — defaults to SN" rules={[{ required: true }]}><Select showSearch options={activePositions.map(p => ({ label: `${p.code} - ${p.fullTitle}`, value: p.code }))} /></Form.Item></Col>
             <Col span={8}><Form.Item name="contactEmail" label="Contact Email" rules={[{ required: true, type: 'email' }]}><Input placeholder="name@aigh.sa" /></Form.Item></Col>
           </Row>
         </Form>

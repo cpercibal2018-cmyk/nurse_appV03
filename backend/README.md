@@ -1,7 +1,7 @@
 # AIGH Backend — Role Matrix CRUD §8 + Contract-First Onboarding §3.1 (NestJS + Prisma + PostgreSQL 15 + Redis)
 
 ## Overview
-Implements User Role Matrix CRUD per spec v2.8.7b §8 + Contract-First Onboarding §3.1 with:
+Implements User Role Matrix CRUD per spec v2.8.7c §8 + Contract-First Onboarding §3.1 with:
 - 4 fixed app roles: SYSTEM_ADMIN, HR_ADMIN, SUPERVISOR, EMPLOYEE (implicit default)
 - Position directory 16 codes FK enforced §3.1.1 — never auto-confers admin
 - Scoped assignments: SYSTEM | DEPARTMENT | UNIT + scopeIds[]

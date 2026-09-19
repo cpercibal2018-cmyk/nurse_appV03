@@ -4,7 +4,7 @@
 **Purpose:** produce a signed credential policy memo that lets the eligibility engine schedule nurses in the five positions that currently have **no rules defined**.
 **Owner:** Director of Nursing · **Escalation:** Chief Medical Officer
 **Deadline:** Week 3 — before Phase 2 staging begins
-**Status:** prepared 18 September 2026 · specification rev 2.8.7b
+**Status:** prepared 18 September 2026 · specification rev 2.8.7c
 
 ---
 

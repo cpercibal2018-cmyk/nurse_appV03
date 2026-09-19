@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
-import { Card, Table, Tag, Button, Space, Modal, Form, Input, Select, InputNumber, Switch, message, Typography, Alert, Badge } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Button, Space, Modal, Form, Input, Select, InputNumber, Switch, message, Typography, Alert, Badge, Tooltip } from 'antd';
+import { PlusOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
 
 const { Title, Text } = Typography;
 
 export default function PositionsPage() {
-  const { positions, employees, addPosition, updatePosition, deletePosition } = useStore();
+  const { positions, employees, currentUser, addPosition, updatePosition, deletePosition, assignPosition } = useStore();
   const [isModal, setIsModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form] = Form.useForm();
   const [filterActive, setFilterActive] = useState<boolean | undefined>(true);
+  const [isAssignOpen, setIsAssignOpen] = useState(false);
+  const [assignForm] = Form.useForm();
 
   const filtered = positions.filter(p => {
     if (filterActive === true && !p.isActive) return false;
@@ -32,6 +34,28 @@ export default function PositionsPage() {
       setEditing(null);
       form.resetFields();
     } catch (e: any) {
+      message.error(e.message);
+    }
+  };
+
+  // Position Assignment writes employees.position — an Employee Master source
+  // field. Spec §8.1 grants that to HR Admin only; the store re-checks the role
+  // so the gate does not depend on this screen.
+  const isHrAdmin = currentUser?.role === 'HR_ADMIN';
+
+  const handleAssign = async () => {
+    try {
+      const values = await assignForm.validateFields();
+      const { previous, positionCode } = assignPosition({
+        employeeId: values.employeeId,
+        positionCode: values.positionCode,
+        reason: values.reason,
+      });
+      message.success(`Position assigned: ${previous} → ${positionCode}. No authorization role was granted (§8.2) — grant it separately if the new position needs one.`);
+      setIsAssignOpen(false);
+      assignForm.resetFields();
+    } catch (e: any) {
+      if (e?.errorFields) return; // antd validation, already shown inline
       message.error(e.message);
     }
   };
@@ -76,6 +100,9 @@ export default function PositionsPage() {
         <Title level={4} style={{ margin: 0 }}>Position Directory — Canonical (FK Enforced)</Title>
         <Space>
           <Select value={filterActive} onChange={setFilterActive} style={{ width: 160 }} options={[{ label: 'Active only (14)', value: true }, { label: 'Inactive (2 deprecated)', value: false }, { label: 'All (16)', value: undefined }]} />
+          <Tooltip title={isHrAdmin ? 'Assign a position to an existing employee — HR Admin only' : `Position assignment requires HR_ADMIN (spec §8.1) — you are signed in as ${currentUser?.role ?? 'no role'}`}>
+            <Button icon={<UserSwitchOutlined />} disabled={!isHrAdmin} onClick={() => { assignForm.resetFields(); setIsAssignOpen(true); }}>Position Assignment</Button>
+          </Tooltip>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setIsModal(true); }}>Add Position</Button>
         </Space>
       </div>
@@ -86,6 +113,24 @@ export default function PositionsPage() {
         style={{ marginBottom: 16 }}
         message="Position Directory CRUD (Section 3.1.1) — Full Implementation"
         description="Directory seeded with 16 positions (14 active, 2 deprecated AHN→ACTING_HEAD, CI→NURSE_EDUCATOR). FK on employees.position and credential_requirements.position. POST creates new code, FK accepts it automatically, no migration. PUT updates title/tier/schedulability, toggling is_schedulable to false demotes future published assignments to draft. DELETE soft-deletes (is_active=false) blocked when employees hold code. Audit trail for all mutations."
+      />
+
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Position Assignment — HR Admin only"
+        description={<>
+          Assigning a position writes <Text code>employees.position</Text>, which is an <Text strong>Employee Master source field</Text>.
+          Spec §8.1 grants Employee Master maintenance to <Text strong>HR Admin</Text> ("Maintain source fields within scope");
+          Supervisor/Scheduler holds an assigned-unit read view with private fields suppressed, and Employee holds own profile and
+          phone only — so neither may assign. The check lives in <Text code>store.assignPosition</Text>, not in this screen, so it
+          holds for every caller.
+          <br /><br />
+          <Text strong>§8.2 — the title never auto-confers a role.</Text> DON, DEPUTY_DON, ADMIN, NS and ACTING_HEAD all keep
+          staff self-service at registration; HR must separately grant the elevated authorization role and scope. This action
+          therefore grants nothing, and records <Text code>authRoleGranted: null</Text> in the audit entry to prove it.
+        </>}
       />
 
       <Card>
@@ -115,6 +160,41 @@ export default function PositionsPage() {
             <Form.Item name="displayOrder" label="Display Order"><InputNumber min={0} max={99} /></Form.Item>
           </Space>
           {editing && <Alert type="warning" showIcon message="Code is immutable. Toggling schedulability to false will demote future published assignments for employees with this position to draft and notify supervisors." />}
+        </Form>
+      </Modal>
+      <Modal
+        title="Position Assignment — HR Admin only"
+        open={isAssignOpen}
+        onCancel={() => { setIsAssignOpen(false); assignForm.resetFields(); }}
+        onOk={handleAssign}
+        okText="Assign Position"
+        okButtonProps={{ disabled: !isHrAdmin }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Employee Master write (spec §8.1)"
+          description="HR Admin assigns the position. This grants no authorization role (§8.2) — the employee keeps staff self-service until HR grants an elevated role and scope separately."
+        />
+        <Form form={assignForm} layout="vertical">
+          <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Select an employee' }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="Select employee"
+              options={employees.filter(e => !(e as any).deletedAt).map(e => ({ label: `${e.name} — ${e.jobNumber} (${e.position})`, value: e.id }))}
+            />
+          </Form.Item>
+          <Form.Item name="positionCode" label="New Position (active only)" rules={[{ required: true, message: 'Select a position' }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="Select position"
+              options={positions.filter(p => p.isActive).sort((a, b) => a.displayOrder - b.displayOrder).map(p => ({ label: `${p.code} - ${p.fullTitle} (${p.tier})`, value: p.code }))}
+            />
+          </Form.Item>
+          <Form.Item name="reason" label="Reason (recorded in the audit trail)"><Input.TextArea rows={2} placeholder="e.g. promotion to Charge Nurse effective next roster" /></Form.Item>
         </Form>
       </Modal>
     </div>

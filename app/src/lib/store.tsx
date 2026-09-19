@@ -36,6 +36,44 @@ export type Contract = {
   startDateHijri?: string; // Umm al-Qura equivalent of startDate (YYYY-MM-DD Hijri), recorded at entry
   endDateHijri?: string;   // Umm al-Qura equivalent of endDate (YYYY-MM-DD Hijri), recorded at entry
   status: 'Draft' | 'PendingApproval' | 'Approved' | 'Active' | 'Expired' | 'Suspended' | 'Terminated' | 'Superseded';
+  /** Versioned contract-copy attachments, oldest first. Never overwritten (spec §5.3.1). */
+  contractCopy?: ContractAttachment[];
+};
+
+/** A file descriptor the store can validate without any DOM File API. */
+export type AttachmentPayload = { name: string; type: string; bytes: Uint8Array };
+
+export type ContractAttachment = {
+  id: string;
+  version: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  uploadedBy: number | null;
+  /** §5.3.2 — no unscanned file is downloadable. */
+  scanStatus: 'PENDING' | 'CLEAN' | 'INFECTED';
+  /** Where the bytes live in the real system (V41 secure-vault storage_key). */
+  storageKey: string;
+};
+
+export const MAX_CONTRACT_COPY_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Attachment bytes, deliberately held OUTSIDE the zustand store. `partialize`
+ * persists `contracts` to localStorage, so putting the bytes on the contract row
+ * would push a base64 PDF into a ~5 MB quota on the first upload. Only metadata
+ * is persisted; the bytes live here for the session, exactly as the real system
+ * keeps them in the secure vault rather than the application database.
+ */
+const contractCopyBytes = new Map<string, Uint8Array>();
+
+/** §5.3.2: an unscanned file is never handed out — anything not CLEAN throws. */
+export const getContractCopyBytes = (attachmentId: string, scanStatus: string): Uint8Array => {
+  if (scanStatus !== 'CLEAN') throw new Error(`SCAN_NOT_CLEAN: attachment ${attachmentId} is ${scanStatus} — an unscanned or infected file is never downloadable (§5.3.2)`);
+  const bytes = contractCopyBytes.get(attachmentId);
+  if (!bytes) throw new Error(`ATTACHMENT_BYTES_UNAVAILABLE: ${attachmentId} — bytes live in the session vault and are not persisted across reloads`);
+  return bytes;
 };
 
 export type Credential = {
@@ -157,7 +195,9 @@ type Store = {
 
   // contracts
   contracts: Contract[];
-  addContract: (contract: Omit<Contract, 'id'>) => void;
+  addContract: (contract: Omit<Contract, 'id'>) => number;
+  /** HR_ADMIN only — contract attachments are HR Admin scoped (spec §4.2). */
+  attachContractCopy: (args: { contractId: number; file: AttachmentPayload }) => ContractAttachment;
   updateContract: (id: number, data: Partial<Contract>) => void;
 
   // credentials
@@ -573,6 +613,7 @@ export const useStore = create<Store>()(
           }
         }
 
+        const newId = Math.max(0, ...state.contracts.map(c => c.id)) + 1;
         set((s) => ({
           contracts: [...s.contracts, {
             ...contract,
@@ -580,9 +621,79 @@ export const useStore = create<Store>()(
             // the onboarding path, so every contract carries both calendars.
             startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
             endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
-            id: Math.max(0, ...s.contracts.map(c => c.id)) + 1,
+            id: newId,
           }]
         }));
+        return newId;
+      },
+
+      /**
+       * Attach the signed contract copy (PDF) to a contract.
+       *
+       * Spec §4.2: contract attachments sit with "create, approval, renewal,
+       * termination; full contract history and attachments", which is HR Admin /
+       * System Admin — Supervisor and Employee get a reduced read view with no
+       * evidence downloads, so neither may attach. The gate lives here rather
+       * than in the screen so it holds for every caller.
+       *
+       * §5.3.1: attachments are versioned and historical bytes are never
+       * overwritten, so this always appends a new version.
+       * §5.3.2: the content type is verified against the PDF magic bytes, not
+       * just the declared MIME type, before the row is marked CLEAN.
+       */
+      attachContractCopy: ({ contractId, file }) => {
+        const state = get();
+
+        if (state.currentUser?.role !== 'HR_ADMIN') {
+          throw new Error(
+            `FORBIDDEN: contract attachments are HR Admin scoped (spec §4.2) and require HR_ADMIN — ` +
+            `current role is ${state.currentUser?.role ?? 'none (not signed in)'}`
+          );
+        }
+
+        const contract = state.contracts.find(c => c.id === contractId);
+        if (!contract) throw new Error(`CONTRACT_NOT_FOUND: ${contractId}`);
+
+        if (!/\.pdf$/i.test(file.name)) throw new Error(`NOT_A_PDF: the contract copy must be a PDF — got "${file.name}"`);
+        if (file.type && file.type !== 'application/pdf') throw new Error(`CONTENT_TYPE_MISMATCH: declared ${file.type}, expected application/pdf (§5.3.2)`);
+        if (!file.bytes || file.bytes.length === 0) throw new Error('EMPTY_FILE: the contract copy has no content');
+        if (file.bytes.length > MAX_CONTRACT_COPY_BYTES) {
+          throw new Error(`FILE_TOO_LARGE: ${(file.bytes.length / 1048576).toFixed(1)} MB exceeds the ${MAX_CONTRACT_COPY_BYTES / 1048576} MB limit`);
+        }
+        // Content-type verification: a real PDF starts with %PDF-.
+        const magic = String.fromCharCode(...Array.from(file.bytes.slice(0, 5)));
+        if (magic !== '%PDF-') throw new Error(`CONTENT_VERIFICATION_FAILED: bytes do not start with %PDF- — the declared type is not the actual content (§5.3.2)`);
+
+        const previous = contract.contractCopy ?? [];
+        const version = previous.length + 1;
+        const id = `cca_${contractId}_v${version}`;
+        const attachment: ContractAttachment = {
+          id,
+          version,
+          fileName: file.name,
+          mimeType: 'application/pdf',
+          sizeBytes: file.bytes.length,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: state.currentUser?.id ?? null,
+          // The magic-byte check above is this mock's stand-in for the ClamAV
+          // quarantine worker, which in the real pipeline leaves the row PENDING
+          // until the scan finishes.
+          scanStatus: 'CLEAN',
+          storageKey: `vault/contracts/${contractId}/v${version}/${file.name}`,
+        };
+
+        contractCopyBytes.set(id, file.bytes);
+        set((s) => ({
+          contracts: s.contracts.map(c => c.id === contractId ? { ...c, contractCopy: [...(c.contractCopy ?? []), attachment] } : c),
+        }));
+        get().addAuditEntry({
+          actorId: state.currentUser?.id ?? null,
+          action: 'CONTRACT_COPY_ATTACHED',
+          resource: 'contracts',
+          resourceId: String(contractId),
+          changes: { attachmentId: id, version, fileName: file.name, sizeBytes: file.bytes.length, scanStatus: 'CLEAN', storageKey: attachment.storageKey },
+        });
+        return attachment;
       },
       updateContract: (id, data) => {
         const state = get();

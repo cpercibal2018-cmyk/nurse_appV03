@@ -50,7 +50,8 @@ const check = (name, cond, detail) => {
 const rejects = fn => { try { fn(); return null; } catch (e) { return e.message; } };
 
 const { toHijri, toHijriShort, toHijriIso } = await bundle('src/lib/hijri.ts');
-const { useStore } = await bundle('src/lib/store.tsx');
+const storeMod = await bundle('src/lib/store.tsx');
+const { useStore } = storeMod;
 const s = () => useStore.getState();
 
 console.log('\n[1] Job Number carries no format rule');
@@ -295,6 +296,64 @@ check('a deprecated position cannot be assigned', deprecatedRejected?.startsWith
 check('an unknown employee is refused', rejects(() => s().assignPosition({ employeeId: 424242, positionCode: 'CN' }))?.startsWith('EMPLOYEE_NOT_FOUND'));
 check('a soft-deleted employee is refused', rejects(() => s().assignPosition({ employeeId: idUnassigned === 0 ? 1 : (s().deleteEmployee(idUnassigned), idUnassigned), positionCode: 'CN' }))?.startsWith('EMPLOYEE_NOT_FOUND'));
 check('re-assigning the same position is refused', rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'CN' }))?.startsWith('POSITION_UNCHANGED'));
+
+console.log('\n[15] Create Contract attaches a contract copy [PDF]');
+// Taken from the SAME module instance as the store being driven — the byte
+// vault is module-level, so a second bundle would have an empty one.
+const { MAX_CONTRACT_COPY_BYTES, getContractCopyBytes } = storeMod;
+const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3]);
+const contractsPage = readFileSync(join(root, 'src/modules/contracts/ContractsPage.tsx'), 'utf8');
+
+check('the Create Contract form carries the upload', /label="Contract Copy \[PDF\] — required"/.test(contractsPage));
+check('the upload accepts PDF only', /accept="\.pdf,application\/pdf"/.test(contractsPage));
+check('the upload never auto-POSTs — the store verifies the bytes', /return false; \/\/ never auto-POST/.test(contractsPage));
+check('the form refuses to create a contract with no copy', /Contract copy \[PDF\] is required/.test(contractsPage));
+check('the attachment gate lives in the store, not the screen', /attachContractCopy: \(\{ contractId, file \}\) => \{/.test(storeSrc));
+
+// The contract under test, created by whoever is signed in at the time.
+s().logout(); s().login('hr.admin@aigh.sa', 'demo123');
+const cid = s().addContract({ employeeId: 3, startDate: '2031-01-01', endDate: '2033-12-31', status: 'Draft' });
+check('addContract returns the new id', typeof cid === 'number' && s().contracts.some(c => c.id === cid), cid);
+
+s().logout();
+check('anonymous upload is refused', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'application/pdf', bytes: PDF } }))?.startsWith('FORBIDDEN'));
+s().login('employee@aigh.sa', 'demo123');
+check('EMPLOYEE upload is refused', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'application/pdf', bytes: PDF } }))?.includes('require HR_ADMIN'));
+s().logout(); s().login('supervisor@aigh.sa', 'demo123');
+check('SUPERVISOR upload is refused (reduced read, no attachments)', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'application/pdf', bytes: PDF } }))?.includes('require HR_ADMIN'));
+s().logout(); s().login('hr.admin@aigh.sa', 'demo123');
+
+check('a non-PDF extension is refused', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'contract.jpg', type: 'image/jpeg', bytes: PDF } }))?.startsWith('NOT_A_PDF'));
+check('a mismatched declared content type is refused', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'text/plain', bytes: PDF } }))?.startsWith('CONTENT_TYPE_MISMATCH'));
+check('bytes that are not really a PDF are refused (§5.3.2 content verification)',
+  rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'application/pdf', bytes: new Uint8Array([0x4d, 0x5a, 0x90, 0x00]) } }))?.startsWith('CONTENT_VERIFICATION_FAILED'));
+check('an empty file is refused', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'application/pdf', bytes: new Uint8Array(0) } }))?.startsWith('EMPTY_FILE'));
+check('an oversized file is refused', rejects(() => s().attachContractCopy({ contractId: cid, file: { name: 'c.pdf', type: 'application/pdf', bytes: new Uint8Array(MAX_CONTRACT_COPY_BYTES + 1) } }))?.startsWith('FILE_TOO_LARGE'));
+check('an unknown contract is refused', rejects(() => s().attachContractCopy({ contractId: 424242, file: { name: 'c.pdf', type: 'application/pdf', bytes: PDF } }))?.startsWith('CONTRACT_NOT_FOUND'));
+
+const v1 = s().attachContractCopy({ contractId: cid, file: { name: 'contract-signed.pdf', type: 'application/pdf', bytes: PDF } });
+check('HR Admin can attach', v1.version === 1 && v1.scanStatus === 'CLEAN' && v1.fileName === 'contract-signed.pdf', v1);
+check('a storage key is recorded instead of raw bytes', v1.storageKey === `vault/contracts/${cid}/v1/contract-signed.pdf`, v1.storageKey);
+check('a real PDF round-trips through the vault', getContractCopyBytes(v1.id, v1.scanStatus).length === PDF.length);
+check('an unscanned attachment is never downloadable (§5.3.2)', rejects(() => getContractCopyBytes(v1.id, 'PENDING'))?.startsWith('SCAN_NOT_CLEAN'));
+check('an infected attachment is never downloadable', rejects(() => getContractCopyBytes(v1.id, 'INFECTED'))?.startsWith('SCAN_NOT_CLEAN'));
+
+const bigger = new Uint8Array(PDF.length + 512); bigger.set(PDF, 0);
+const v2 = s().attachContractCopy({ contractId: cid, file: { name: 'contract-signed-amended.pdf', type: 'application/pdf', bytes: bigger } });
+const copies = s().contracts.find(c => c.id === cid).contractCopy;
+check('a second upload is a new version, not an overwrite (§5.3.1)', v2.version === 2 && copies.length === 2 && copies[0].id === v1.id, copies.map(c => c.version));
+check('both versions are independently retrievable',
+  getContractCopyBytes(v1.id, 'CLEAN').length === PDF.length && getContractCopyBytes(v2.id, 'CLEAN').length === bigger.length);
+
+const attachAudit = s().auditEntries.filter(a => a.action === 'CONTRACT_COPY_ATTACHED');
+check('every attachment is audited', attachAudit.length === 2 && attachAudit[1].changes.version === 2, attachAudit.map(a => a.changes.version));
+
+// Bytes must not reach localStorage — only metadata is persisted.
+const persisted = JSON.parse(mem.get('aigh-workforce-storage') || '{"state":{}}');
+const persistedCopies = (persisted.state.contracts || []).flatMap(c => c.contractCopy || []);
+check('attachment metadata is persisted', persistedCopies.some(a => a.id === v2.id), persistedCopies.map(a => a.id));
+check('attachment BYTES are never persisted to localStorage',
+  JSON.stringify(persistedCopies).length < 2000 && !JSON.stringify(persisted.state.contracts).includes('%PDF'), JSON.stringify(persistedCopies).length);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

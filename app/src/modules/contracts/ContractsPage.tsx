@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker, Alert, Typography, Descriptions, Row, Col, message, Tooltip } from 'antd';
-import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined } from '@ant-design/icons';
-import { useStore } from '../../lib/store';
+import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker, Alert, Typography, Descriptions, Row, Col, message, Tooltip, Upload } from 'antd';
+import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons';
+import { useStore, getContractCopyBytes, MAX_CONTRACT_COPY_BYTES } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
 import { latestContractFor, renewalPeriodAfter } from '../../lib/contracts';
@@ -9,7 +9,7 @@ import { latestContractFor, renewalPeriodAfter } from '../../lib/contracts';
 const { Title, Text } = Typography;
 
 export default function ContractsPage() {
-  const { employees, contracts, units, positions, addContract, updateContract, currentUser, addAuditEntry } = useStore();
+  const { employees, contracts, units, positions, addContract, attachContractCopy, updateContract, currentUser, addAuditEntry } = useStore();
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -19,6 +19,21 @@ export default function ContractsPage() {
   // Live Gregorian → Hijri (Umm al-Qura) conversion for the contract date pickers
   const startWatch = Form.useWatch('startDate', form);
   const endWatch = Form.useWatch('endDate', form);
+
+  // The signed contract copy staged in the Create Contract form. Held here
+  // rather than in antd's file list so the bytes can be handed to the store,
+  // which is what verifies them.
+  const [contractCopy, setContractCopy] = useState<File | null>(null);
+
+  const downloadCopy = (attachment: any) => {
+    try {
+      const bytes = getContractCopyBytes(attachment.id, attachment.scanStatus);
+      const url = URL.createObjectURL(new Blob([bytes as any], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = attachment.fileName; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) { message.error(e.message); }
+  };
 
   // The employee picked in Create Contract, and the contract period HR entered
   // for them at Onboarding. "Latest" is the coverage period (Approved/Active)
@@ -67,16 +82,28 @@ export default function ContractsPage() {
       const overlapping = contracts.some(cc => cc.employeeId === employeeId && ['Approved', 'Active'].includes(cc.status) && !(new Date(end) < new Date(cc.startDate) || new Date(start) > new Date(cc.endDate)));
       if (overlapping) throw new Error('Overlapping contract period — exclusion constraint GiST daterange && WHERE status IN (Approved,Active) rejects overlapping Approved/Active periods for same employee');
 
-      addContract({
+      if (!contractCopy) throw new Error('Contract copy [PDF] is required — attach the signed contract before creating the record');
+
+      const newContractId = addContract({
         employeeId,
         startDate: start,
         endDate: end,
         status: values.status || 'Draft',
       } as any);
 
-      message.success(`Contract created for ${emp.name} — Job Number ${emp.jobNumber} from contract — Status ${values.status}`);
+      // The store verifies the content type against the PDF magic bytes and
+      // refuses anything that is not a real PDF, so read the bytes here and let
+      // it decide rather than trusting the file picker.
+      const bytes = new Uint8Array(await contractCopy.arrayBuffer());
+      const attachment = attachContractCopy({
+        contractId: newContractId,
+        file: { name: contractCopy.name, type: contractCopy.type, bytes },
+      });
+
+      message.success(`Contract created for ${emp.name} — Job Number ${emp.jobNumber} — Status ${values.status} — contract copy v${attachment.version} attached (${(attachment.sizeBytes / 1024).toFixed(0)} KB, scan ${attachment.scanStatus})`);
       setIsModalOpen(false);
       form.resetFields();
+      setContractCopy(null);
     } catch (err: any) {
       message.error(err.message || 'Contract creation failed');
     }
@@ -167,6 +194,31 @@ export default function ContractsPage() {
       }
     },
     {
+      title: 'Contract Copy', key: 'contractCopy', width: 190,
+      render: (_: any, r: any) => {
+        const copies = r.contractCopy ?? [];
+        if (copies.length === 0) return <Tag>none</Tag>;
+        const latest = copies[copies.length - 1];
+        return (
+          <Space direction="vertical" size={2}>
+            <Space size={4}>
+              <FilePdfOutlined style={{ color: '#c00' }} />
+              <Text style={{ fontSize: 11 }} ellipsis>{latest.fileName}</Text>
+            </Space>
+            <Space size={4}>
+              <Tag color={latest.scanStatus === 'CLEAN' ? 'green' : latest.scanStatus === 'PENDING' ? 'orange' : 'red'}>
+                {latest.scanStatus}
+              </Tag>
+              <Text style={{ fontSize: 11 }}>v{latest.version} · {(latest.sizeBytes / 1024).toFixed(0)} KB</Text>
+              <Tooltip title={latest.scanStatus === 'CLEAN' ? 'Download the contract copy' : 'Not downloadable — an unscanned or infected file is never handed out (§5.3.2)'}>
+                <Button size="small" icon={<DownloadOutlined />} disabled={latest.scanStatus !== 'CLEAN'} onClick={() => downloadCopy(latest)} />
+              </Tooltip>
+            </Space>
+          </Space>
+        );
+      }
+    },
+    {
       title: 'Actions', key: 'actions', width: 250,
       render: (_: any, r: any) => (
         <Space wrap>
@@ -192,7 +244,7 @@ export default function ContractsPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <Title level={4} style={{ margin: 0 }}><FileTextOutlined /> Contracts — HR Admin Enters Contract Data (Job Number from Contract)</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setEditingContract(null); setIsModalOpen(true); }}>Create Contract (HR Admin)</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setContractCopy(null); setEditingContract(null); setIsModalOpen(true); }}>Create Contract (HR Admin)</Button>
       </div>
 
       <Alert
@@ -323,6 +375,26 @@ export default function ContractsPage() {
               { label: 'Approved — Provides coverage if dates cover today, future Approved does NOT supersede current', value: 'Approved' },
               { label: 'Active — Provides coverage today (if dates cover today)', value: 'Active' },
             ]} />
+          </Form.Item>
+
+          <Form.Item
+            label="Contract Copy [PDF] — required"
+            required
+            extra="PDF only, max 10 MB. Content type is verified against the %PDF- magic bytes, not just the declared type (§5.3.2); each upload is a new version and historical bytes are never overwritten (§5.3.1); attachments are HR Admin scoped (§4.2)."
+          >
+            <Upload
+              accept=".pdf,application/pdf"
+              maxCount={1}
+              beforeUpload={(file) => {
+                if (!/\.pdf$/i.test(file.name)) { message.error('Contract copy must be a PDF'); return Upload.LIST_IGNORE; }
+                if (file.size > MAX_CONTRACT_COPY_BYTES) { message.error(`Contract copy exceeds the ${MAX_CONTRACT_COPY_BYTES / 1048576} MB limit`); return Upload.LIST_IGNORE; }
+                setContractCopy(file as any);
+                return false; // never auto-POST — the bytes go to the store, which verifies them
+              }}
+              onRemove={() => { setContractCopy(null); return true; }}
+            >
+              <Button icon={<UploadOutlined />}>Attach Contract Copy (PDF)</Button>
+            </Upload>
           </Form.Item>
 
           <Descriptions bordered size="small" column={1} style={{ marginTop: 16 }}>

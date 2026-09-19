@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED } from '../data/seed';
+import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED, UNASSIGNED_UNIT_ID } from '../data/seed';
 import { toHijriIso } from './hijri';
 import { providesCoverage, periodsOverlap } from './contracts';
 
@@ -152,6 +152,8 @@ type Store = {
   addEmployee: (emp: Omit<Employee, 'id'> & { contractStart: string; contractEnd: string }) => number;
   updateEmployee: (id: number, data: Partial<Employee>) => void;
   deleteEmployee: (id: number) => void;
+  /** HR_ADMIN only — writing employees.position is an Employee Master write (spec §8.1). */
+  assignPosition: (args: { employeeId: number; positionCode: string; reason?: string }) => { previous: string; positionCode: string };
 
   // contracts
   contracts: Contract[];
@@ -247,7 +249,10 @@ export const useStore = create<Store>()(
       login: (email, password) => {
         // mock auth - any password works for demo, but check email pattern
         if (!email.includes('@')) return false;
-        const role = email.includes('admin') ? 'SYSTEM_ADMIN' : email.includes('hr') ? 'HR_ADMIN' : email.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
+        // 'hr' must be tested before 'admin': the documented HR demo account is
+        // hr.admin@aigh.sa, and testing 'admin' first silently signed it in as
+        // SYSTEM_ADMIN, which an HR_ADMIN-only gate then rejects.
+        const role = email.includes('hr') ? 'HR_ADMIN' : email.includes('admin') ? 'SYSTEM_ADMIN' : email.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
         const user = { id: 1, name: email.split('@')[0], role, email };
         set({ isAuthenticated: true, currentUser: user, csrfToken: Math.random().toString(36).substring(2) });
         get().addAuditEntry({ actorId: 1, action: 'LOGIN', resource: 'auth', resourceId: '1', changes: { email } });
@@ -400,9 +405,13 @@ export const useStore = create<Store>()(
         // Duplicate job number triggers full rollback via DB unique constraint
         if (!emp.jobNumber || String(emp.jobNumber).trim().length === 0) throw new Error('Job Number is required — from contract to be entered');
         if (state.employees.find(e => String(e.jobNumber).toLowerCase() === String(emp.jobNumber).toLowerCase() && !e.deletedAt)) throw new Error(`Duplicate job number — job number is from contract and must be unique: ${emp.jobNumber}`);
-        // unit exists
-        const unit = state.units.find(u => u.id === emp.unitId && u.isActive);
-        if (!unit) throw new Error('Invalid unit');
+        // unit exists — unless the employee is deliberately left Unassigned (id 0),
+        // the onboarding default. Unassigned is a sentinel, not a directory row, so
+        // it must not be looked up in `units`.
+        if (emp.unitId !== UNASSIGNED_UNIT_ID) {
+          const unit = state.units.find(u => u.id === emp.unitId && u.isActive);
+          if (!unit) throw new Error('Invalid unit');
+        }
 
         // Validate contract dates — start/end inclusive, next non-overlapping renewal starts after previous end
         const start = new Date(emp.contractStart);
@@ -483,6 +492,55 @@ export const useStore = create<Store>()(
       deleteEmployee: (id) => set((s) => ({
         employees: s.employees.map(e => e.id === id ? { ...e, deletedAt: new Date().toISOString() } : e)
       })),
+
+      /**
+       * Position Assignment — set an existing employee's position from the
+       * Position Directory screen.
+       *
+       * RBAC, checked here rather than in the screen so it holds for every
+       * caller. Writing `employees.position` is an Employee Master source field,
+       * which spec §8.1 grants to HR Admin ("Maintain source fields within
+       * scope"). Supervisor/Scheduler gets an assigned-unit read view only and
+       * Employee gets own profile and phone only, so neither may assign.
+       *
+       * Spec §8.2: assigning a position never confers an authorization role.
+       * DON, DEPUTY_DON, ADMIN, NS and ACTING_HEAD all keep staff self-service
+       * until HR separately grants an elevated role and scope, so this action
+       * deliberately touches no role assignment.
+       */
+      assignPosition: ({ employeeId, positionCode, reason }) => {
+        const state = get();
+
+        if (state.currentUser?.role !== 'HR_ADMIN') {
+          throw new Error(
+            `FORBIDDEN: position assignment is an Employee Master write (spec §8.1) and requires HR_ADMIN — ` +
+            `current role is ${state.currentUser?.role ?? 'none (not signed in)'}`
+          );
+        }
+
+        const employee = state.employees.find(e => e.id === employeeId);
+        if (!employee || employee.deletedAt) throw new Error(`EMPLOYEE_NOT_FOUND: employee ${employeeId} does not exist or is deleted`);
+
+        const position = state.positions.find(p => p.code === positionCode);
+        if (!position) throw new Error(`POSITION_NOT_FOUND: ${positionCode}`);
+        if (!position.isActive) throw new Error(`POSITION_NOT_ACTIVE: ${positionCode} is deprecated — migrate it to its replacement before assigning`);
+        if (employee.position === positionCode) throw new Error(`POSITION_UNCHANGED: ${employee.name} already holds ${positionCode}`);
+
+        const previous = employee.position;
+        set((s) => ({
+          employees: s.employees.map(e => e.id === employeeId ? { ...e, position: positionCode } : e),
+        }));
+        get().addAuditEntry({
+          actorId: state.currentUser?.id || 1,
+          action: 'POSITION_ASSIGNED',
+          resource: 'employees',
+          resourceId: String(employeeId),
+          // authRoleGranted is recorded as null on purpose: §8.2 says the title
+          // never auto-confers a role, so the audit row must show that none was.
+          changes: { position: { from: previous, to: positionCode }, reason: reason || null, authRoleGranted: null },
+        });
+        return { previous, positionCode };
+      },
 
       contracts: CONTRACTS_SEED as Contract[],
       // Contract guards live in the store, not in a screen, so they hold no

@@ -233,5 +233,68 @@ check('migrated File No. is plain', rows.map(e => e.fileNo).join(' ') === '1001 
 check('migrated Job Number lost the retired AIGH- prefix', rows.map(e => e.jobNumber).join(' ') === '1001 1002', rows.map(e => e.jobNumber));
 check('migration kept the rest of the persisted row', rows[0].name === 'Sarah Ahmed Al-Harbi' && rows[0].jobTitle === 'Registered Nurse', rows[0]);
 
+console.log('\n[13] Onboarding defaults: Nursing Unit = Unassigned, Position = SN');
+const { UNASSIGNED_UNIT_ID, DEFAULT_ONBOARD_POSITION, NURSING_UNITS } = await bundle('src/data/seed.ts');
+check('Unassigned sentinel is 0', UNASSIGNED_UNIT_ID === 0, UNASSIGNED_UNIT_ID);
+check('default position is SN', DEFAULT_ONBOARD_POSITION === 'SN', DEFAULT_ONBOARD_POSITION);
+check('SN exists and is active in the directory', s().positions.some(p => p.code === 'SN' && p.isActive));
+check('Unassigned is NOT a directory row (47-unit / 582-bed baseline intact)',
+  !NURSING_UNITS.some(u => u.id === UNASSIGNED_UNIT_ID) && NURSING_UNITS.length === 47, NURSING_UNITS.length);
+check('bed total is still 582', NURSING_UNITS.reduce((n, u) => n + u.bedCount, 0) === 582,
+  NURSING_UNITS.reduce((n, u) => n + u.bedCount, 0));
+check('form declares both defaults', /initialValues=\{\{ unitId: UNASSIGNED_UNIT_ID, position: DEFAULT_ONBOARD_POSITION \}\}/.test(page));
+check('Nursing Unit select offers Unassigned', /value: UNASSIGNED_UNIT_ID/.test(page) && page.includes('Unassigned — not yet placed in a unit'));
+
+const idUnassigned = s().addEmployee({
+  firstName: 'Raneem', middleName: '', lastName: 'Al-Fahad',
+  jobNumber: '6001', jobTitle: 'Staff Nurse', fileNo: '6001', rankGrade: 'Grade 6',
+  nationality: 'Saudi', jobPostLocation: 'Buraydah', actualWorkPlace: 'Float Pool',
+  specialty: 'General', maritalStatus: 'Single', salary: 8200,
+  unitId: UNASSIGNED_UNIT_ID, position: DEFAULT_ONBOARD_POSITION, contactEmail: 'raneem@aigh.sa',
+  contractStart: '2026-09-19', contractEnd: '2029-09-18',
+});
+const unassigned = s().employees.find(e => e.id === idUnassigned);
+check('onboarding accepts the Unassigned sentinel', unassigned && unassigned.unitId === 0 && unassigned.position === 'SN',
+  unassigned && [unassigned.unitId, unassigned.position]);
+check('Full Name still derived for an Unassigned employee', unassigned.name === 'Raneem Al-Fahad', unassigned && unassigned.name);
+check('an unknown unit id is still rejected', rejects(() => s().addEmployee({
+  firstName: 'X', lastName: 'Y', jobNumber: '6002', unitId: 9999, position: 'SN',
+  contactEmail: 'x@aigh.sa', contractStart: '2026-09-19', contractEnd: '2029-09-18',
+}))?.includes('Invalid unit'));
+
+console.log('\n[14] Position Assignment is an Employee Master write — HR Admin only (§8.1)');
+const posPage = readFileSync(join(root, 'src/modules/workforce/PositionsPage.tsx'), 'utf8');
+check('the assignment gate lives in the store, not the screen', /assignPosition: \(\{ employeeId, positionCode, reason \}\) => \{/.test(storeSrc));
+check("the store checks the role before writing", /currentUser\?\.role !== 'HR_ADMIN'/.test(storeSrc));
+check('the screen disables the button for other roles', /disabled=\{!isHrAdmin\}/.test(posPage));
+check('the screen states HR Admin only', posPage.includes('Position Assignment — HR Admin only'));
+check('the screen records that no auth role is granted (§8.2)', posPage.includes('§8.2'));
+
+// Evaluate each rejection once — building the detail message by calling the
+// action a second time would perform the write twice when the guard is absent.
+const anonRejected = rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'CN' }));
+check('anonymous caller is refused', anonRejected?.startsWith('FORBIDDEN'), anonRejected);
+s().logout(); s().login('employee@aigh.sa', 'demo123');
+check('EMPLOYEE is refused', rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'CN' }))?.includes('requires HR_ADMIN'));
+s().logout(); s().login('supervisor@aigh.sa', 'demo123');
+check('SUPERVISOR is refused (read view only)', rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'CN' }))?.includes('requires HR_ADMIN'));
+s().logout(); s().login('admin@aigh.sa', 'demo123');
+check('SYSTEM_ADMIN is refused — the gate is HR_ADMIN specifically', rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'CN' }))?.includes('requires HR_ADMIN'));
+
+s().logout(); s().login('hr.admin@aigh.sa', 'demo123');
+check("the documented HR demo account really is HR_ADMIN", s().currentUser?.role === 'HR_ADMIN', s().currentUser?.role);
+const before = s().employees.find(e => e.id === 1).position;
+const res = s().assignPosition({ employeeId: 1, positionCode: 'CN', reason: 'promotion effective next roster' });
+check('HR Admin can assign', s().employees.find(e => e.id === 1).position === 'CN' && res.previous === before, res);
+const audit = s().auditEntries.filter(a => a.action === 'POSITION_ASSIGNED').pop();
+check('audit trail records the change', audit && audit.changes.position.from === before && audit.changes.position.to === 'CN', audit && audit.changes);
+check('audit trail proves no authorization role was granted (§8.2)', audit && audit.changes.authRoleGranted === null, audit && audit.changes);
+check('reason is recorded', audit && audit.changes.reason === 'promotion effective next roster');
+const deprecatedRejected = rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'AHN' }));
+check('a deprecated position cannot be assigned', deprecatedRejected?.startsWith('POSITION_NOT_ACTIVE'), deprecatedRejected);
+check('an unknown employee is refused', rejects(() => s().assignPosition({ employeeId: 424242, positionCode: 'CN' }))?.startsWith('EMPLOYEE_NOT_FOUND'));
+check('a soft-deleted employee is refused', rejects(() => s().assignPosition({ employeeId: idUnassigned === 0 ? 1 : (s().deleteEmployee(idUnassigned), idUnassigned), positionCode: 'CN' }))?.startsWith('EMPLOYEE_NOT_FOUND'));
+check('re-assigning the same position is refused', rejects(() => s().assignPosition({ employeeId: 1, positionCode: 'CN' }))?.startsWith('POSITION_UNCHANGED'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

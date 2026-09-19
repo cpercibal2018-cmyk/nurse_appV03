@@ -6,6 +6,22 @@ export const DEPARTMENTS = [
   { id: 5, code: 'CORP', name: 'Administrative & Corporate Services', description: 'Nursing admin, HR, infection control and support services', isActive: true, createdAt: '2026-01-01' },
 ];
 
+/**
+ * Sentinel value, deliberately NOT a row in NURSING_UNITS. "Unassigned" means the
+ * employee exists but has not been placed in a unit yet. Adding it to the
+ * directory would break the seeded baseline the specification asserts (47 nursing
+ * units / 582 beds) and that `verify_integration.py` F-01 machine-checks, and it
+ * would put a bedless pseudo-unit into the Hospital Master Unit Directory.
+ */
+export const UNASSIGNED_UNIT_ID = 0;
+
+/**
+ * The onboarding form starts on SN — Staff Nurse: the frontline clinical position
+ * (active, tier Clinical, schedulable, displayOrder 10), which is what most
+ * onboardings are. HR can still pick any active position.
+ */
+export const DEFAULT_ONBOARD_POSITION = 'SN';
+
 export const NURSING_UNITS = [
   // EMAC 133
   { id: 1, code: 'ER_MAIN', name: 'ER Main / Adult', departmentId: 1, bedCount: 39, isActive: true, description: 'Primary triage and emergency care for adults' },

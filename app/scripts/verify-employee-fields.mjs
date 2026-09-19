@@ -61,7 +61,7 @@ console.log('\n[2] Full Name is derived from First + Middle + Last');
 check('demo rows compose correctly', seeded.every(e => e.name === [e.firstName, e.middleName, e.lastName].filter(Boolean).join(' ')));
 const idNoMiddle = s().addEmployee({
   firstName: '  Nora  ', middleName: '', lastName: ' Al-Salem ',
-  jobNumber: '5001', jobTitle: 'Staff Nurse', fileNo: 'F-5001', rankGrade: 'Grade 7',
+  jobNumber: '5001', jobTitle: 'Staff Nurse', fileNo: '5001', rankGrade: 'Grade 7',
   nationality: 'Saudi', jobPostLocation: 'Buraydah', actualWorkPlace: 'ER Main',
   specialty: 'Emergency', maritalStatus: 'Others', salary: 9200,
   unitId: 1, position: 'SN', contactEmail: 'nora@aigh.sa',
@@ -72,7 +72,7 @@ check('middle name omitted → no double space', noMiddle.name === 'Nora Al-Sale
 check('name parts are trimmed', noMiddle.firstName === 'Nora' && noMiddle.lastName === 'Al-Salem');
 const idWithMiddle = s().addEmployee({
   firstName: 'Khalid', middleName: ' bin ', lastName: 'Salem',
-  jobNumber: 'EMP2026X', jobTitle: 'Charge Nurse', fileNo: 'F-5002', rankGrade: 'Grade 8',
+  jobNumber: 'EMP2026X', jobTitle: 'Charge Nurse', fileNo: '5002', rankGrade: 'Grade 8',
   nationality: 'Egyptian', jobPostLocation: 'Unaizah', actualWorkPlace: 'NICU',
   specialty: 'Neonatal', maritalStatus: 'Married', salary: 10500,
   unitId: 15, position: 'CN', contactEmail: 'khalid@aigh.sa',
@@ -84,11 +84,14 @@ check('first + middle + last compose', withMiddle.name === 'Khalid bin Salem', w
 
 console.log('\n[3] Fields after Job Number are captured in order');
 for (const [field, expected] of Object.entries({
-  jobTitle: 'Charge Nurse', fileNo: 'F-5002', rankGrade: 'Grade 8', nationality: 'Egyptian',
+  jobTitle: 'Charge Nurse', fileNo: '5002', rankGrade: 'Grade 8', nationality: 'Egyptian',
   jobPostLocation: 'Unaizah', actualWorkPlace: 'NICU', specialty: 'Neonatal',
   maritalStatus: 'Married', salary: 10500,
 })) check(field + ' stored', withMiddle[field] === expected, withMiddle[field]);
 check('demo rows carry all nine HR fields', seeded.every(e => e.jobTitle && e.fileNo && e.rankGrade && e.nationality && e.jobPostLocation && e.actualWorkPlace && e.specialty && e.maritalStatus && typeof e.salary === 'number'));
+check('demo file numbers are plain (no prefix, no formatting)', seeded.every(e => /^\d+$/.test(e.fileNo)), seeded.map(e => e.fileNo));
+const storeSrc = readFileSync(join(root, 'src/lib/store.tsx'), 'utf8');
+check('File No. carries no format rule in the store either', !/fileNo[\s\S]{0,120}pattern/i.test(storeSrc));
 
 console.log('\n[4] Contract dates carry both calendars');
 const c1 = s().contracts.find(c => c.employeeId === idNoMiddle);
@@ -144,6 +147,7 @@ const required = ['firstName', 'middleName', 'lastName', 'fullName', 'jobNumber'
 check('form field order matches the specification', JSON.stringify(declared.slice(0, required.length)) === JSON.stringify(required), declared);
 check('Full Name field is read-only', /name="fullName"[\s\S]{0,200}readOnly/.test(page));
 check('Contract Start and End are both required', (page.match(/name="contract(Start|End)"[\s\S]{0,120}required: true/g) || []).length === 2);
+check('File No. placeholder shows a plain number', /name="fileNo"[\s\S]{0,120}placeholder="\d+"/.test(page), (page.match(/name="fileNo"[^>]*placeholder="([^"]*)"/) || [])[1]);
 
 
 console.log('\n[9] Contract guards hold in the store, not just in a screen');

@@ -200,7 +200,7 @@ export default function WorkforcePage() {
               <Form.Item name="jobNumber" label="Job Number (from Contract — Unique)" extra="Plain format — plain numbers or text+number combination (e.g. 1001, 2003, AIGH1002, EMP2004), no AIGH- prefix, unique, from contract to be entered." rules={[{ required: true, message: 'Job Number required — plain format' }]}><Input placeholder="1001 or AIGH1002 or EMP2004" /></Form.Item>
             </Col>
             <Col span={8}><Form.Item name="jobTitle" label="Job Title" rules={[{ required: true, message: 'Job Title required' }]}><Input placeholder="Registered Nurse" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="fileNo" label="File No." rules={[{ required: true }]}><Input placeholder="F-1001" /></Form.Item></Col>
+            <Col span={8}><Form.Item name="fileNo" label="File No." rules={[{ required: true }]}><Input placeholder="1001" /></Form.Item></Col>
           </Row>
 
           <Row gutter={16}>

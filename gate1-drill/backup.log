@@ -1,0 +1,15 @@
+2026-09-18T11:03:41Z nightly-backup: starting backup 20260918_110341
+2026-09-18T11:03:41Z wal-archive: archived 000000010000000000000001 (2550378 bytes)
+2026-09-18T11:03:42Z wal-archive: archived 000000010000000000000002 (16950 bytes)
+2026-09-18T11:03:42Z wal-archive: archived 000000010000000000000002.00000028.backup (654 bytes)
+2026-09-18T11:03:42Z nightly-backup: envelope verification OK
+2026-09-18T11:03:42Z nightly-backup: backup complete: basebackup_20260918_110341.tar.gz.gpg (3956103 bytes, sha256 ee705c96c40b…)
+2026-09-18T11:03:42Z wal-archive: archived 000000010000000000000003 (25383 bytes)
+2026-09-18T11:03:45Z wal-archive: archived 000000010000000000000004 (17625 bytes)
+2026-09-18T11:03:45Z restore: using base backup basebackup_20260918_110341.tar.gz.gpg for target 2026-09-18 11:03:43.944+00
+2026-09-18T11:03:45Z restore: decrypting and unpacking
+2026-09-18T11:03:45Z restore: starting recovery instance on port 5516
+2026-09-18T11:03:48Z restore: recovery complete — database promoted
+2026-09-18T11:03:49Z wal-archive: archived 000000010000000000000005 (39867 bytes)
+2026-09-18T11:08:49Z wal-archive: archived 000000010000000000000006 (20539 bytes)
+2026-09-18T11:09:06Z wal-archive: archived 000000010000000000000007 (16952 bytes)

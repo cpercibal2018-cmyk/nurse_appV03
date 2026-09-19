@@ -1,0 +1,82 @@
+# .github/workflows/ci.yml (fragment — merge into the existing workflow)
+# B-02 / B-19 / B-25 — production-target runtime, bundle budget gate,
+# database-backed tests, and the Wave 1A regression suite.
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+
+    # PostgreSQL 15 and Node 20 — the PRODUCTION target (Section 0.2/11.4).
+    # Local validation used Node 24 / PG 17.11; this job is what certifies prod.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: nurseapp_owner
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: nurseapp_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nurseapp_owner"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+
+    env:
+      TEST_DATABASE_URL: postgresql://nurseapp_owner:ci_password@localhost:5432/nurseapp_test
+      DATABASE_URL: postgresql://nurseapp_owner:ci_password@localhost:5432/nurseapp_test
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20' # production target — not 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        # --ignore-scripts suppresses postinstall hooks, so this must be explicit.
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run build:backend
+
+      - name: Apply migrations (PostgreSQL 15)
+        run: npx prisma migrate deploy
+
+      - name: Verify migration drift (repeat run)
+        run: npx prisma migrate deploy
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: PostgreSQL workflow tests
+        run: npm run test:pg
+
+      - name: HTTP smoke tests
+        run: npm run test:http
+
+      - name: Wave 1A regression tests (leases, idempotency, residency, CSRF order)
+        run: npx jest --config test/jest-wave1a.config.ts --runInBand
+
+      - name: Frontend build
+        run: npm run build:frontend
+
+      - name: Bundle budget (fails over 200 KB gz entry / 150 KB gz chunk)
+        run: node scripts/check-bundle-size.mjs dist

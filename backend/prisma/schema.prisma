@@ -1,0 +1,244 @@
+// AIGH Nursing Workforce Management — Prisma Schema v2.8.7b
+// Role Matrix CRUD §8 + Position Directory §3.1.1 + Four-Eyes V42 + PAM V42 + Audit §9.1 + Idempotency B-08
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // nurseapp_runtime — see §10.7 privilege separation
+}
+
+enum AppRole {
+  SYSTEM_ADMIN
+  HR_ADMIN
+  SUPERVISOR
+  EMPLOYEE // implicit default, not stored as assignment except for audit clarity
+}
+
+enum ScopeType {
+  SYSTEM // system-wide, scopeIds empty
+  DEPARTMENT
+  UNIT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXECUTED
+}
+
+// Position Directory §3.1.1 — 16 codes, FK enforced, no auth fields (deliberate separation)
+model Position {
+  code          String   @id // DON, DEPUTY_DON, ADMIN, NS, ACTING_HEAD, NURSE_EDUCATOR, PRACTITIONER, HN, CN, SN, PCT, TEC, HCA, MW, etc
+  title         String
+  titleAr       String?
+  tier          String // Executive, Administrative, Management, Specialist, Advanced Practice, Clinical Lead, Clinical, Support, Clinical Specialist
+  isSchedulable Boolean
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         User[]
+  employees     Employee[]
+  @@map("positions")
+}
+
+model Department {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique
+  name      String
+  nameAr    String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  units     Unit[]
+  @@map("departments")
+}
+
+model Unit {
+  id           String   @id @default(uuid()) @db.Uuid
+  departmentId String   @db.Uuid
+  code         String   @unique
+  name         String
+  nameAr       String?
+  bedCapacity  Int
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department   Department @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+  @@map("units")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  name         String
+  positionCode String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  position          Position? @relation(fields: [positionCode], references: [code])
+  roleAssignments   UserRoleAssignment[] @relation("userAssignments")
+  grantedRoles      UserRoleAssignment[] @relation("grantedBy")
+  revokedRoles      UserRoleAssignment[] @relation("revokedBy")
+  approvalRequests  AdminApprovalRequest[] @relation("initiator")
+  approvalsGiven    AdminApprovalRequest[] @relation("approver")
+  privilegedSession PrivilegedSession?
+
+  @@map("users")
+}
+
+// Employee Master — §3.1 contract-first, job_number unique from contract to be entered
+// First Name, Middle Name, Last Name fields, Full Name = First + Middle + Last automatic
+model Employee {
+  id           String   @id @default(uuid()) @db.Uuid
+  jobNumber    String   @unique // Job Number is from the contract to be entered — unique per employee, plain numbers or text+number combination allowed (e.g. 1001, AIGH1002, EMP2004), no strict format, enforced by DB unique index + fn_onboard_employee_with_contract atomic rollback on duplicate §3.1
+  firstName    String // First Name required
+  middleName   String? // Middle Name optional
+  lastName     String // Last Name required
+  fullName     String // Full Name = First + Middle + Last automatic when user fills fields
+  name         String // kept for backward compat = fullName
+  unitId       String   @db.Uuid
+  positionCode String
+  contactEmail String   @unique
+  status       String   @default("Active")
+  hireDate     DateTime @default(now())
+  deletedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  position     Position @relation(fields: [positionCode], references: [code])
+  unit         Unit     @relation(fields: [unitId], references: [id])
+  contracts    Contract[]
+
+  @@index([unitId])
+  @@index([positionCode])
+  @@map("employees")
+}
+
+enum ContractStatus {
+  Draft
+  PendingApproval
+  Approved
+  Active
+  Expired
+  Suspended
+  Terminated
+  Superseded
+}
+
+model Contract {
+  id         String         @id @default(uuid()) @db.Uuid
+  employeeId String         @db.Uuid
+  jobNumber  String // Denormalized from Employee for contract-first traceability — job number is from the contract that to be entered
+  startDate  DateTime       @db.Date
+  endDate    DateTime       @db.Date
+  status     ContractStatus @default(Draft)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, status])
+  // Exclusion constraint GiST daterange && WHERE status IN (Approved,Active) — overlapping periods same employee rejected at DB level — enforced via raw SQL migration V36
+  // Check start/end inclusive, next non-overlapping renewal starts after previous end
+  @@map("contracts")
+}
+
+// Core: User Role Assignments — §8.1, §8.2, V42, V44
+model UserRoleAssignment {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  role              AppRole
+  scopeType         ScopeType
+  scopeIds          String[] @db.Uuid // [] for SYSTEM, [deptId] or [unitId, ...] for others
+  grantedBy         String   @db.Uuid
+  grantedAt         DateTime @default(now())
+  expiresAt         DateTime? // null = permanent, or temporary for ACTING_HEAD
+  revokedAt         DateTime?
+  revokedBy         String?  @db.Uuid
+  isActive          Boolean  @default(true)
+  reason            String   // required justification >=20 chars
+  approvalRequestId String?  @db.Uuid
+
+  user              User     @relation("userAssignments", fields: [userId], references: [id])
+  granter           User     @relation("grantedBy", fields: [grantedBy], references: [id])
+  revoker           User?    @relation("revokedBy", fields: [revokedBy], references: [id])
+  approvalRequest   AdminApprovalRequest? @relation(fields: [approvalRequestId], references: [id])
+
+  @@index([userId, isActive])
+  @@index([role, scopeType])
+  // Partial unique enforced via raw SQL migration: only one active per user+role+scopeType
+  @@map("user_role_assignments")
+}
+
+model AdminApprovalRequest {
+  id          String         @id @default(uuid()) @db.Uuid
+  initiatorId String         @db.Uuid
+  approverId  String?        @db.Uuid
+  actionType  String // PROMOTE_SYSTEM_ADMIN, GRANT_HR_ADMIN_SYSTEM, GRANT_HR_ADMIN_DEPARTMENT, etc
+  payload     Json // {userId, role, scopeType, scopeIds, reason, expiresAt}
+  status      ApprovalStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+  decidedAt   DateTime?
+  executedAt  DateTime?
+
+  initiator   User           @relation("initiator", fields: [initiatorId], references: [id])
+  approver    User?          @relation("approver", fields: [approverId], references: [id])
+  assignments UserRoleAssignment[]
+
+  // Partial unique WHERE status=PENDING enforced via raw SQL
+  @@map("admin_approval_requests")
+}
+
+model PrivilegedSession {
+  userId       String   @id @db.Uuid
+  elevatedAt   DateTime @default(now())
+  expiresAt    DateTime
+  reason       String
+  authorizedBy String?  @db.Uuid
+
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@map("privileged_sessions")
+}
+
+// Audit — §9.1 hash-chained append-only, PDPL encrypted, blind indexing V37 V38
+model AuditEntry {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String   @db.Uuid
+  action       String // ROLE_GRANTED, ROLE_REVOKED, ROLE_GRANT_PENDING, ROLE_APPROVED, etc
+  targetId     String?  @db.Uuid
+  oldValue     Json?
+  newValue     Json?
+  hash         String   // SHA256(prevHash + payload)
+  prevHash     String?
+  createdAt    DateTime @default(now())
+  // encrypted fields, blind index omitted for brevity
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_entries")
+}
+
+// Idempotency — B-08, 409 only while live lease, retaken after expiry
+model IdempotencyKey {
+  key        String   @id
+  userId     String   @db.Uuid
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime // now + 24h
+  response   Json? // cached response for replay
+
+  @@index([userId, expiresAt])
+  @@map("idempotency_keys")
+}
+
+// Additional: Bed capacity history B-24, Credential, etc omitted for brevity — see full spec
+// Note: Employee.jobNumber unique — job number is from the contract that to be entered, enforced by DB unique index + fn_onboard_employee_with_contract atomic
+// Contract.jobNumber denormalized for traceability, exclusion constraint GiST daterange && WHERE status IN (Approved,Active) rejects overlapping periods same employee at DB level

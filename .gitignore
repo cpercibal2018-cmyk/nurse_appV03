@@ -1,0 +1,30 @@
+# --- secrets: never commit keyrings or private keys -------------------------
+.gnupg/
+**/gpg-backup/
+**/gpg-restore/
+**/private-keys-v1.d/
+*.key
+*.rev
+*.kbx
+*.kbx~
+trustdb.gpg
+random_seed
+.sudo_as_admin_successful
+
+# --- drill output: encrypted base backups + WAL are large opaque binaries ----
+# Keep them in the drill host / object storage, not in Git. Logs and the
+# evidence .md files ARE committed as the proof of execution.
+gate1-drill/backup/
+gate1-drill/restore/
+*.tar.gz.gpg
+*.gpg
+
+# --- generated ---------------------------------------------------------------
+__pycache__/
+*.pyc
+node_modules/
+dist/
+dist-node/
+*.zip
+*.tsbuildinfo
+vite.config.d.ts

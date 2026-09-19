@@ -305,7 +305,33 @@ const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a
 const contractsPage = readFileSync(join(root, 'src/modules/contracts/ContractsPage.tsx'), 'utf8');
 
 check('the Create Contract form carries the upload', /label="Contract Copy \[PDF\] — required"/.test(contractsPage));
-check('the upload accepts PDF only', /accept="\.pdf,application\/pdf"/.test(contractsPage));
+// The filter is a real function now, so assert its behaviour rather than
+// grepping the JSX for a string that proves nothing on its own.
+const { checkContractCopyCandidate, CONTRACT_COPY_ACCEPT, PDF_MAGIC } = await bundle('src/lib/contracts.ts', 'filter');
+const realPdf = { name: 'contract-signed.pdf', type: 'application/pdf', size: 20480, head: PDF };
+const exe = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03]);
+check('picker accept value is PDF only', CONTRACT_COPY_ACCEPT === 'application/pdf,.pdf', CONTRACT_COPY_ACCEPT);
+check('PDF_MAGIC is %PDF-', PDF_MAGIC === '%PDF-');
+check('a real .pdf is accepted', checkContractCopyCandidate(realPdf).ok === true);
+check('an uppercase .PDF is accepted', checkContractCopyCandidate({ ...realPdf, name: 'C.PDF' }).ok === true);
+for (const bad of ['contract.jpg', 'contract.pdf.exe', 'contract', 'contract.PDF.txt']) {
+  const v = checkContractCopyCandidate({ ...realPdf, name: bad });
+  check(`"${bad}" is refused`, v.ok === false && v.code === 'NOT_A_PDF', v);
+}
+check('a file RENAMED to .pdf is still refused once its bytes are read', (() => {
+  const v = checkContractCopyCandidate({ name: 'invoice.pdf', type: 'application/pdf', size: 4096, head: exe });
+  return v.ok === false && v.code === 'CONTENT_VERIFICATION_FAILED';
+})());
+check('...and the picker reads those bytes, so this fires at pick time', /await file\.slice\(0, PDF_MAGIC\.length\)\.arrayBuffer\(\)/.test(contractsPage));
+check('a mismatched declared type is refused', (() => {
+  const v = checkContractCopyCandidate({ ...realPdf, type: 'text/plain' });
+  return v.ok === false && v.code === 'CONTENT_TYPE_MISMATCH';
+})());
+check('an empty file is refused', checkContractCopyCandidate({ ...realPdf, size: 0, head: new Uint8Array(0) }).code === 'EMPTY_FILE');
+check('an oversized file is refused', checkContractCopyCandidate({ ...realPdf, size: MAX_CONTRACT_COPY_BYTES + 1 }).code === 'FILE_TOO_LARGE');
+check('the declared size wins over a short head prefix', checkContractCopyCandidate({ ...realPdf, size: MAX_CONTRACT_COPY_BYTES + 1, head: PDF }).code === 'FILE_TOO_LARGE');
+check('the size is inferred from the bytes when the picker does not report one', checkContractCopyCandidate({ name: 'c.pdf', type: 'application/pdf', head: new Uint8Array(0) }).code === 'EMPTY_FILE');
+check('screen and store share one rule, so they cannot drift', /checkContractCopyCandidate\(/.test(contractsPage) && /checkContractCopyCandidate\(\{ name: file\.name, type: file\.type, head: file\.bytes \}\)/.test(storeSrc));
 check('the upload never auto-POSTs — the store verifies the bytes', /return false; \/\/ never auto-POST/.test(contractsPage));
 check('the form refuses to create a contract with no copy', /Contract copy \[PDF\] is required/.test(contractsPage));
 check('the attachment gate lives in the store, not the screen', /attachContractCopy: \(\{ contractId, file \}\) => \{/.test(storeSrc));

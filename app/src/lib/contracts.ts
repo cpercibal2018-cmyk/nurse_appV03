@@ -66,3 +66,63 @@ export function renewalPeriodAfter(prior: ContractPeriod | undefined): { start: 
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   return { start: iso(nextStart), end: iso(nextEnd) };
 }
+
+// ── Contract copy [PDF] acceptance ──────────────────────────────────────────
+//
+// One rule shared by the Create Contract screen and the store guard, so the
+// picker and the write path cannot drift apart. Note that the `accept`
+// attribute on a file input is only a hint: every browser lets the user switch
+// the dialog to "All files". The filter that actually decides is this function
+// plus the store's byte check.
+
+/** `accept` value for the picker — MIME first, extension as a fallback for pickers that match on suffix. */
+export const CONTRACT_COPY_ACCEPT = 'application/pdf,.pdf';
+
+export const MAX_CONTRACT_COPY_BYTES = 10 * 1024 * 1024;
+
+/** A real PDF starts with these five bytes; the declared type alone proves nothing. */
+export const PDF_MAGIC = '%PDF-';
+
+export type ContractCopyVerdict =
+  | { ok: true }
+  | { ok: false; code: 'NOT_A_PDF' | 'CONTENT_TYPE_MISMATCH' | 'EMPTY_FILE' | 'FILE_TOO_LARGE' | 'CONTENT_VERIFICATION_FAILED'; message: string };
+
+export interface ContractCopyCandidate {
+  name: string;
+  type?: string;
+  /** Bytes, when known. Omitted by pickers that only report name/type/size. */
+  size?: number;
+  /** The first few bytes, when the caller has read them. */
+  head?: Uint8Array;
+}
+
+/**
+ * Decide whether a file may be attached as the contract copy.
+ *
+ * `head` is optional so the picker can reject on name/type/size instantly and
+ * then confirm against the bytes it read; when `head` is present it is
+ * authoritative, because a file renamed to `.pdf` still is not a PDF.
+ */
+export function checkContractCopyCandidate(file: ContractCopyCandidate): ContractCopyVerdict {
+  if (!/\.pdf$/i.test(file.name || '')) {
+    return { ok: false, code: 'NOT_A_PDF', message: `The contract copy must be a PDF — got "${file.name}"` };
+  }
+  if (file.type && file.type !== 'application/pdf') {
+    return { ok: false, code: 'CONTENT_TYPE_MISMATCH', message: `Declared type ${file.type}, expected application/pdf (§5.3.2)` };
+  }
+  // `head` may be only a prefix of the file, so prefer the declared size.
+  const size = file.size ?? file.head?.length;
+  if (size !== undefined) {
+    if (size === 0) return { ok: false, code: 'EMPTY_FILE', message: 'The contract copy has no content' };
+    if (size > MAX_CONTRACT_COPY_BYTES) {
+      return { ok: false, code: 'FILE_TOO_LARGE', message: `${(size / 1048576).toFixed(1)} MB exceeds the ${MAX_CONTRACT_COPY_BYTES / 1048576} MB limit` };
+    }
+  }
+  if (file.head) {
+    const magic = String.fromCharCode(...Array.from(file.head.slice(0, PDF_MAGIC.length)));
+    if (magic !== PDF_MAGIC) {
+      return { ok: false, code: 'CONTENT_VERIFICATION_FAILED', message: 'The bytes do not start with %PDF- — the file is not a PDF whatever it is named (§5.3.2)' };
+    }
+  }
+  return { ok: true };
+}

@@ -4,7 +4,7 @@ import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOu
 import { useStore, getContractCopyBytes, MAX_CONTRACT_COPY_BYTES } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
-import { latestContractFor, renewalPeriodAfter } from '../../lib/contracts';
+import { latestContractFor, renewalPeriodAfter, checkContractCopyCandidate, CONTRACT_COPY_ACCEPT, PDF_MAGIC } from '../../lib/contracts';
 
 const { Title, Text } = Typography;
 
@@ -383,13 +383,27 @@ export default function ContractsPage() {
             extra="PDF only, max 10 MB. Content type is verified against the %PDF- magic bytes, not just the declared type (§5.3.2); each upload is a new version and historical bytes are never overwritten (§5.3.1); attachments are HR Admin scoped (§4.2)."
           >
             <Upload
-              accept=".pdf,application/pdf"
+              accept={CONTRACT_COPY_ACCEPT}
               maxCount={1}
-              beforeUpload={(file) => {
-                if (!/\.pdf$/i.test(file.name)) { message.error('Contract copy must be a PDF'); return Upload.LIST_IGNORE; }
-                if (file.size > MAX_CONTRACT_COPY_BYTES) { message.error(`Contract copy exceeds the ${MAX_CONTRACT_COPY_BYTES / 1048576} MB limit`); return Upload.LIST_IGNORE; }
+              beforeUpload={async (file) => {
+                // `accept` is only a hint: every browser lets the user switch the
+                // dialog to "All files". So the picker checks the content too,
+                // and refuses here rather than after HR has filled the form in.
+                const quick = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size });
+                if (!quick.ok) { message.error(quick.message); return Upload.LIST_IGNORE; }
+
+                let head: Uint8Array;
+                try {
+                  head = new Uint8Array(await file.slice(0, PDF_MAGIC.length).arrayBuffer());
+                } catch {
+                  message.error('The contract copy could not be read — try again');
+                  return Upload.LIST_IGNORE;
+                }
+                const verified = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size, head });
+                if (!verified.ok) { message.error(verified.message); return Upload.LIST_IGNORE; }
+
                 setContractCopy(file as any);
-                return false; // never auto-POST — the bytes go to the store, which verifies them
+                return false; // never auto-POST — the bytes go to the store, which re-verifies
               }}
               onRemove={() => { setContractCopy(null); return true; }}
             >

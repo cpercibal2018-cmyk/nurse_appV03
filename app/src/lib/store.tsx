@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED, UNASSIGNED_UNIT_ID } from '../data/seed';
 import { toHijriIso } from './hijri';
-import { providesCoverage, periodsOverlap } from './contracts';
+import { providesCoverage, periodsOverlap, checkContractCopyCandidate } from './contracts';
 
 export type Employee = {
   id: number;
@@ -57,7 +57,8 @@ export type ContractAttachment = {
   storageKey: string;
 };
 
-export const MAX_CONTRACT_COPY_BYTES = 10 * 1024 * 1024;
+// The cap lives in the shared rules module so the picker and this guard use one number.
+export { MAX_CONTRACT_COPY_BYTES } from './contracts';
 
 /**
  * Attachment bytes, deliberately held OUTSIDE the zustand store. `partialize`
@@ -654,15 +655,10 @@ export const useStore = create<Store>()(
         const contract = state.contracts.find(c => c.id === contractId);
         if (!contract) throw new Error(`CONTRACT_NOT_FOUND: ${contractId}`);
 
-        if (!/\.pdf$/i.test(file.name)) throw new Error(`NOT_A_PDF: the contract copy must be a PDF — got "${file.name}"`);
-        if (file.type && file.type !== 'application/pdf') throw new Error(`CONTENT_TYPE_MISMATCH: declared ${file.type}, expected application/pdf (§5.3.2)`);
-        if (!file.bytes || file.bytes.length === 0) throw new Error('EMPTY_FILE: the contract copy has no content');
-        if (file.bytes.length > MAX_CONTRACT_COPY_BYTES) {
-          throw new Error(`FILE_TOO_LARGE: ${(file.bytes.length / 1048576).toFixed(1)} MB exceeds the ${MAX_CONTRACT_COPY_BYTES / 1048576} MB limit`);
-        }
-        // Content-type verification: a real PDF starts with %PDF-.
-        const magic = String.fromCharCode(...Array.from(file.bytes.slice(0, 5)));
-        if (magic !== '%PDF-') throw new Error(`CONTENT_VERIFICATION_FAILED: bytes do not start with %PDF- — the declared type is not the actual content (§5.3.2)`);
+        // Same rule the picker applies, with the bytes present so the content
+        // check runs. A file renamed to .pdf still is not a PDF.
+        const verdict = checkContractCopyCandidate({ name: file.name, type: file.type, head: file.bytes });
+        if (!verdict.ok) throw new Error(`${verdict.code}: ${verdict.message}`);
 
         const previous = contract.contractCopy ?? [];
         const version = previous.length + 1;

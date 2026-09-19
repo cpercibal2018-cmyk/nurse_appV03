@@ -96,7 +96,7 @@ check('Gregorian start stored', c1.startDate === '2026-09-19', c1.startDate);
 check('Hijri start converted', c1.startDateHijri === '1448-04-08', c1.startDateHijri);
 check('Hijri end converted', c1.endDateHijri === '1451-05-09', c1.endDateHijri);
 check('caller-supplied Hijri preserved', s().contracts.find(c => c.employeeId === idWithMiddle).startDateHijri === '1447-07-25');
-s().addContract({ employeeId: 1, startDate: '2026-03-01', endDate: '2027-02-28', status: 'Approved' });
+s().addContract({ employeeId: 1, startDate: '2026-03-01', endDate: '2027-02-28', status: 'Draft' });
 const derived = s().contracts.filter(c => c.employeeId === 1).pop();
 check('addContract derives Hijri when omitted', /^\d{4}-\d{2}-\d{2}$/.test(derived.startDateHijri || '') && /^\d{4}-\d{2}-\d{2}$/.test(derived.endDateHijri || ''), [derived.startDateHijri, derived.endDateHijri]);
 
@@ -144,6 +144,54 @@ const required = ['firstName', 'middleName', 'lastName', 'fullName', 'jobNumber'
 check('form field order matches the specification', JSON.stringify(declared.slice(0, required.length)) === JSON.stringify(required), declared);
 check('Full Name field is read-only', /name="fullName"[\s\S]{0,200}readOnly/.test(page));
 check('Contract Start and End are both required', (page.match(/name="contract(Start|End)"[\s\S]{0,120}required: true/g) || []).length === 2);
+
+
+console.log('\n[9] Contract guards hold in the store, not just in a screen');
+const { latestContractFor, renewalPeriodAfter, periodsOverlap, providesCoverage } = await bundle('src/lib/contracts.ts');
+
+check('contract for an unknown employee rejected', /EMPLOYEE_NOT_FOUND/.test(rejects(() => s().addContract({ employeeId: 99999, startDate: '2030-01-01', endDate: '2031-01-01', status: 'Draft' })) || ''), rejects(() => s().addContract({ employeeId: 99999, startDate: '2030-01-01', endDate: '2031-01-01', status: 'Draft' })));
+const tempId = s().addEmployee({ firstName: 'Temp', lastName: 'Delete', jobNumber: 'TMP-DEL-1', unitId: 1, position: 'SN', contactEmail: 'tmp@aigh.sa', contractStart: '2026-01-01', contractEnd: '2026-06-30' });
+s().deleteEmployee(tempId);
+check('contract for a soft-deleted employee rejected', /EMPLOYEE_NOT_FOUND/.test(rejects(() => s().addContract({ employeeId: tempId, startDate: '2027-01-01', endDate: '2028-01-01', status: 'Draft' })) || ''));
+
+// Employee 1 carries the seeded Active contract 2023-01-15 → 2026-01-14.
+const seededContract = s().contracts.find(c => c.employeeId === 1);
+check('seeded coverage contract is Active', seededContract.status === 'Active', seededContract.status);
+check('overlapping Approved period rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Approved' })) || ''));
+check('overlapping Active period rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Active' })) || ''));
+check('overlap message names the clashing period', /2023-01-15/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Approved' })) || ''));
+const draftCount = s().contracts.length;
+s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Draft' });
+check('overlapping Draft allowed (provides no coverage)', s().contracts.length === draftCount + 1);
+check('end on or before start rejected', /after start/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2030-05-05', endDate: '2030-05-05', status: 'Draft' })) || ''));
+const beforeRenewal = s().contracts.length;
+s().addContract({ employeeId: 1, startDate: '2026-01-15', endDate: '2029-01-14', status: 'Approved' });
+check('renewal starting the day after the previous end accepted', s().contracts.length === beforeRenewal + 1);
+check('renewal carries Hijri dates', /^\d{4}-\d{2}-\d{2}$/.test(s().contracts[s().contracts.length - 1].startDateHijri || ''), s().contracts[s().contracts.length - 1].startDateHijri);
+
+console.log('\n[10] updateContract enforces the same rule');
+check('unknown contract id rejected', /CONTRACT_NOT_FOUND/.test(rejects(() => s().updateContract(99999, { status: 'Active' })) || ''));
+const draft = s().contracts.find(c => c.employeeId === 1 && c.status === 'Draft' && c.startDate === '2025-01-01');
+check('target Draft located', !!draft, draft && draft.startDate);
+check('promoting an overlapping Draft to Approved rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().updateContract(draft.id, { status: 'Approved' })) || ''));
+s().updateContract(draft.id, { status: 'Terminated' });
+check('terminating an overlapping Draft is allowed (no coverage)', s().contracts.find(c => c.id === draft.id).status === 'Terminated');
+const renewal = s().contracts.find(c => c.employeeId === 1 && c.startDate === '2026-01-15');
+check('re-dating a coverage contract into an overlap rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().updateContract(renewal.id, { startDate: '2025-06-01', endDate: '2027-06-01' })) || ''));
+check('re-dating within the free window is allowed', (() => { s().updateContract(renewal.id, { endDate: '2028-12-31' }); return s().contracts.find(c => c.id === renewal.id).endDate === '2028-12-31'; })());
+
+console.log('\n[11] Shared period helpers (Create Contract carries onboarding dates forward)');
+check('providesCoverage: Approved/Active only', providesCoverage('Approved') && providesCoverage('Active') && !providesCoverage('Draft') && !providesCoverage('Terminated') && !providesCoverage('Expired'));
+check('periodsOverlap is inclusive at both ends', periodsOverlap('2026-01-01', '2026-01-10', '2026-01-10', '2026-02-01') === true);
+check('periodsOverlap: adjacent days do not clash', periodsOverlap('2026-01-01', '2026-01-10', '2026-01-11', '2026-02-01') === false);
+const prior = { employeeId: 1, startDate: '2023-01-15', endDate: '2026-01-14', status: 'Active' };
+const renewalWindow = renewalPeriodAfter(prior);
+check('renewal starts the day after the previous end', renewalWindow.start === '2026-01-15', renewalWindow.start);
+check('renewal runs for the same length', renewalWindow.end === '2029-01-14', renewalWindow.end);
+check('renewal of nothing is null', renewalPeriodAfter(undefined) === null);
+const latest = latestContractFor(s().contracts, 1);
+check('latestContractFor prefers the coverage period with the furthest end', latest.status === 'Approved' && latest.startDate === '2026-01-15', latest && [latest.status, latest.startDate]);
+check('latestContractFor for an unknown employee is undefined', latestContractFor(s().contracts, 424242) === undefined);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

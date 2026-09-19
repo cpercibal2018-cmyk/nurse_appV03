@@ -4,6 +4,7 @@ import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined } from '@
 import { useStore } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
+import { latestContractFor, renewalPeriodAfter } from '../../lib/contracts';
 
 const { Title, Text } = Typography;
 
@@ -18,6 +19,26 @@ export default function ContractsPage() {
   // Live Gregorian → Hijri (Umm al-Qura) conversion for the contract date pickers
   const startWatch = Form.useWatch('startDate', form);
   const endWatch = Form.useWatch('endDate', form);
+
+  // The employee picked in Create Contract, and the contract period HR entered
+  // for them at Onboarding. "Latest" is the coverage period (Approved/Active)
+  // with the furthest end date, falling back to any contract on record.
+  const selectedEmployeeId = Form.useWatch('employeeId', form);
+  const selectedEmployee = employees.find(e => e.id === selectedEmployeeId);
+
+  const priorContract = selectedEmployeeId ? latestContractFor(contracts, selectedEmployeeId) : undefined;
+
+  // Picking an employee carries their onboarding dates forward: the new period
+  // starts the day after the previous end (spec — "next non-overlapping renewal
+  // starts after previous end") and runs for the same length.
+  const onEmployeeChange = (employeeId: number) => {
+    const next = renewalPeriodAfter(latestContractFor(contracts, employeeId));
+    if (!next) {
+      form.setFieldsValue({ startDate: undefined, endDate: undefined });
+      return;
+    }
+    form.setFieldsValue({ startDate: dayjs(next.start), endDate: dayjs(next.end) });
+  };
 
   const filtered = contracts.filter(c => {
     if (search) {
@@ -80,11 +101,17 @@ export default function ContractsPage() {
       }
     }
 
-    updateContract(contractId, { status: newStatus });
+    // The store enforces the same exclusion rule, so a change that would create
+    // an overlapping Approved/Active period is rejected here as well.
+    try {
+      updateContract(contractId, { status: newStatus });
+    } catch (err: any) {
+      message.error(err.message || 'Status change rejected');
+      return;
+    }
     message.success(`Contract ${contractId} status changed to ${newStatus} — Job Number from contract retained`);
     addAuditEntry({ actorId: currentUser?.id || 1, action: `CONTRACT_${newStatus.toUpperCase()}`, resource: 'contracts', resourceId: String(contractId), changes: { status: newStatus, jobNumber: employees.find(e => e.id === contract.employeeId)?.jobNumber } });
   };
-
   const columns = [
     { title: 'Contract ID', dataIndex: 'id', key: 'id', width: 100, sorter: (a: any, b: any) => a.id - b.id },
     {
@@ -243,8 +270,42 @@ export default function ContractsPage() {
           <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="Contract-First + Job Number from Contract" description="HR Admin enters Job Number (from contract) + employee + dates. Job Number unique enforced by DB unique index. Exclusion constraint GiST prevents overlapping Approved/Active periods same employee. Start/end inclusive." />
 
           <Form.Item name="employeeId" label="Employee (Job Number from Contract)" rules={[{ required: true }]} extra="Select existing employee — Job Number is from contract that was entered during onboarding, plain numbers or text+number combination allowed (e.g. 1001, AIGH1002), unique per employee. For new employee, use Workforce → Onboard Employee which creates employee + contract atomically via fn_onboard_employee_with_contract. Full Name auto = First + Middle + Last.">
-            <Select showSearch placeholder="Search by job number or name" options={employees.filter(e => !(e as any).deletedAt).map(e => ({ label: `${e.jobNumber} — ${e.name} [${(e as any).firstName} ${(e as any).middleName || ''} ${(e as any).lastName}] [${e.position}] Unit ${e.unitId}`, value: e.id }))} filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())} />
+            <Select showSearch placeholder="Search by job number or name" onChange={onEmployeeChange} options={employees.filter(e => !(e as any).deletedAt).map(e => ({ label: `${e.jobNumber} — ${e.name} [${(e as any).firstName} ${(e as any).middleName || ''} ${(e as any).lastName}] [${e.position}] Unit ${e.unitId}`, value: e.id }))} filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())} />
           </Form.Item>
+
+          {/* Contract Start / Contract End entered at Onboarding, carried into
+              this form so HR renews from the recorded period instead of
+              retyping it. */}
+          {selectedEmployee && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`Contract entered at Onboarding — ${selectedEmployee.name} (Job Number ${selectedEmployee.jobNumber})`}
+              description={priorContract ? (
+                <>
+                  <Descriptions size="small" column={2} bordered>
+                    <Descriptions.Item label="Contract Start">
+                      <Text strong>{priorContract.startDate}</Text>
+                      <br /><Text type="secondary">{priorContract.startDateHijri || toHijriShort(priorContract.startDate)} هـ</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Contract End">
+                      <Text strong>{priorContract.endDate}</Text>
+                      <br /><Text type="secondary">{priorContract.endDateHijri || toHijriShort(priorContract.endDate)} هـ</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Status" span={2}><Tag color={priorContract.status === 'Active' ? 'green' : 'blue'}>{priorContract.status}</Tag></Descriptions.Item>
+                  </Descriptions>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    These dates are appended to the pickers below: the new period starts the day after
+                    {' '}{priorContract.endDate} and runs for the same length. Adjust them if the renewal differs.
+                  </Text>
+                </>
+              ) : (
+                <Text type="secondary">No contract on record for this employee — enter both dates below.</Text>
+              )}
+            />
+          )}
+
 
           <Row gutter={16}>
             <Col span={12}>

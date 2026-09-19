@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED } from '../data/seed';
 import { toHijriIso } from './hijri';
+import { providesCoverage, periodsOverlap } from './contracts';
 
 export type Employee = {
   id: number;
@@ -458,19 +459,78 @@ export const useStore = create<Store>()(
       })),
 
       contracts: CONTRACTS_SEED as Contract[],
-      addContract: (contract) => set((s) => ({
-        contracts: [...s.contracts, {
-          ...contract,
-          // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
-          // the onboarding path, so every contract carries both calendars.
-          startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
-          endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
-          id: Math.max(0, ...s.contracts.map(c => c.id)) + 1,
-        }]
-      })),
-      updateContract: (id, data) => set((s) => ({
-        contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
-      })),
+      // Contract guards live in the store, not in a screen, so they hold no
+      // matter which caller creates or changes a contract. They mirror the
+      // database rules: the employee foreign key and the GiST exclusion
+      // constraint over Approved/Active periods for the same employee.
+      addContract: (contract) => {
+        const state = get();
+
+        // 1. Existence — the employee must exist and not be soft-deleted.
+        const employee = state.employees.find(e => e.id === contract.employeeId && !e.deletedAt);
+        if (!employee) {
+          throw new Error(`EMPLOYEE_NOT_FOUND: no active employee ${contract.employeeId} — a contract cannot be created for someone who has not been onboarded`);
+        }
+
+        // 2. Dates — present, parseable, and ordered (start/end inclusive).
+        const start = new Date(contract.startDate);
+        const end = new Date(contract.endDate);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) throw new Error('Invalid contract dates');
+        if (end <= start) throw new Error('Contract end must be after start — inclusive dates');
+
+        // 3. Overlap — rejected only when the new contract itself provides coverage.
+        if (providesCoverage(contract.status)) {
+          const clash = state.contracts.find(cc =>
+            cc.employeeId === contract.employeeId &&
+            providesCoverage(cc.status) &&
+            periodsOverlap(contract.startDate, contract.endDate, cc.startDate, cc.endDate));
+          if (clash) {
+            throw new Error(`CONTRACT_PERIOD_OVERLAP: employee ${employee.jobNumber} already has a ${clash.status} contract ${clash.startDate} → ${clash.endDate}. Overlapping Approved/Active periods are rejected; the next renewal starts the day after the previous end.`);
+          }
+        }
+
+        set((s) => ({
+          contracts: [...s.contracts, {
+            ...contract,
+            // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
+            // the onboarding path, so every contract carries both calendars.
+            startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
+            endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
+            id: Math.max(0, ...s.contracts.map(c => c.id)) + 1,
+          }]
+        }));
+      },
+      updateContract: (id, data) => {
+        const state = get();
+        const current = state.contracts.find(c => c.id === id);
+        if (!current) throw new Error(`CONTRACT_NOT_FOUND: ${id}`);
+
+        const nextStatus = data.status ?? current.status;
+        const nextStart = data.startDate ?? current.startDate;
+        const nextEnd = data.endDate ?? current.endDate;
+
+        // The same exclusion rule applies when a change moves the contract into
+        // a coverage status or re-dates it while it already provides coverage.
+        if (providesCoverage(nextStatus)) {
+          const start = new Date(nextStart);
+          const end = new Date(nextEnd);
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) throw new Error('Invalid contract dates');
+          if (end <= start) throw new Error('Contract end must be after start — inclusive dates');
+
+          const clash = state.contracts.find(cc =>
+            cc.id !== id &&
+            cc.employeeId === current.employeeId &&
+            providesCoverage(cc.status) &&
+            periodsOverlap(nextStart, nextEnd, cc.startDate, cc.endDate));
+          if (clash) {
+            throw new Error(`CONTRACT_PERIOD_OVERLAP: contract ${id} would overlap the ${clash.status} contract ${clash.startDate} → ${clash.endDate} for the same employee.`);
+          }
+        }
+
+        set((s) => ({
+          contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
+        }));
+      },
 
       credentials: [
         { id: 1, employeeId: 1, templateId: 5, validityStatus: 'Valid', issueDate: '2023-01-01', expiryDate: '2026-06-01', trackingData: { scfhs_number: 'SCFHS-001' }, syncStatus: 'SYNCED', lastSyncAttempt: new Date().toISOString() },

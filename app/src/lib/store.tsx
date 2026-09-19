@@ -211,6 +211,32 @@ function simpleHash(str: string): string {
   return Math.abs(hash).toString(16).padStart(8, '0') + Date.now().toString(16);
 }
 
+/**
+ * The demo data shipped formatted identifiers before 2.8.7c — File No. as
+ * 'F-1001' and Job Number as 'AIGH-1001'. Neither field carries a format rule
+ * any more, but the store is persisted to localStorage, so a session that saved
+ * the old rows keeps replaying them no matter what `seed.ts` says. Stripping the
+ * retired prefixes on rehydrate is what lets the change reach an already-open
+ * browser instead of only a freshly cleared one. Only a leading 'F-' or 'AIGH-'
+ * is removed; any other shape HR typed is left exactly as entered.
+ */
+export const stripRetiredIdentifierPrefix = (value?: string): string | undefined =>
+  typeof value === 'string' ? value.replace(/^\s*(?:F|AIGH)-/i, '') : value;
+
+export const normalizePersistedEmployees = <T extends { fileNo?: string; jobNumber?: string }>(
+  employees: T[] | undefined
+): T[] | undefined =>
+  Array.isArray(employees)
+    ? employees.map((e) => ({
+        ...e,
+        fileNo: stripRetiredIdentifierPrefix(e?.fileNo),
+        jobNumber: stripRetiredIdentifierPrefix(e?.jobNumber),
+      }))
+    : employees;
+
+/** Bumped whenever a `migrate` step is added; persisted data at an older version is migrated on rehydrate. */
+export const STORE_VERSION = 1;
+
 export const useStore = create<Store>()(
   persist(
     (set, get) => ({
@@ -710,6 +736,15 @@ export const useStore = create<Store>()(
     }),
     {
       name: 'aigh-workforce-storage',
+      version: STORE_VERSION,
+      // Sessions persisted before 2.8.7c hold the formatted demo identifiers.
+      // Without this step localStorage silently outranks seed.ts and an
+      // already-open browser never sees the plain File No.
+      migrate: (persistedState) => {
+        const persisted = persistedState as { employees?: Employee[] } | undefined;
+        if (!persisted) return persistedState as Store;
+        return { ...persisted, employees: normalizePersistedEmployees(persisted.employees) } as Store;
+      },
       partialize: (state) => ({
         departments: state.departments,
         units: state.units,

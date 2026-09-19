@@ -25,7 +25,7 @@ globalThis.localStorage = {
   removeItem: k => mem.delete(k),
 };
 
-async function bundle(entry) {
+async function bundle(entry, tag) {
   const res = await build({
     entryPoints: [join(root, entry)],
     bundle: true,
@@ -34,7 +34,9 @@ async function bundle(entry) {
     platform: 'node',
     loader: { '.tsx': 'tsx', '.ts': 'ts' },
   });
-  const file = join(dir, entry.replace(/[\\/]/g, '_') + '.mjs');
+  // A distinct filename gives a distinct module instance, so a second call
+  // re-runs the module — needed to exercise zustand's rehydrate/migrate path.
+  const file = join(dir, entry.replace(/[\\/]/g, '_') + (tag ? '_' + tag : '') + '.mjs');
   writeFileSync(file, res.outputFiles[0].text);
   return import(pathToFileURL(file).href);
 }
@@ -196,6 +198,40 @@ check('renewal of nothing is null', renewalPeriodAfter(undefined) === null);
 const latest = latestContractFor(s().contracts, 1);
 check('latestContractFor prefers the coverage period with the furthest end', latest.status === 'Approved' && latest.startDate === '2026-01-15', latest && [latest.status, latest.startDate]);
 check('latestContractFor for an unknown employee is undefined', latestContractFor(s().contracts, 424242) === undefined);
+
+console.log('\n[12] A browser session saved before 2.8.7c is migrated, not replayed');
+// zustand persist stores to localStorage under this key. Seed it with the
+// pre-2.8.7c demo rows at version 0, then import a FRESH copy of the real
+// store module so persist actually rehydrates and runs its migrate step.
+const { normalizePersistedEmployees, stripRetiredIdentifierPrefix, STORE_VERSION } =
+  await import(pathToFileURL(join(dir, 'src_lib_store.tsx.mjs')).href);
+check('store version is declared', STORE_VERSION === 1, STORE_VERSION);
+check('stripRetiredIdentifierPrefix removes F-', stripRetiredIdentifierPrefix('F-1001') === '1001', stripRetiredIdentifierPrefix('F-1001'));
+check('stripRetiredIdentifierPrefix removes AIGH-', stripRetiredIdentifierPrefix('AIGH-1001') === '1001', stripRetiredIdentifierPrefix('AIGH-1001'));
+check('stripRetiredIdentifierPrefix leaves a legal text+number job number alone', stripRetiredIdentifierPrefix('AIGH1002') === 'AIGH1002', stripRetiredIdentifierPrefix('AIGH1002'));
+check('stripRetiredIdentifierPrefix leaves an HR-typed value alone', stripRetiredIdentifierPrefix('EMP2026X') === 'EMP2026X');
+check('normalizePersistedEmployees maps every row', JSON.stringify(
+  normalizePersistedEmployees([{ fileNo: 'F-1001', jobNumber: 'AIGH-1001' }, { fileNo: '2003', jobNumber: '2003' }])
+) === JSON.stringify([{ fileNo: '1001', jobNumber: '1001' }, { fileNo: '2003', jobNumber: '2003' }]));
+
+mem.set('aigh-workforce-storage', JSON.stringify({
+  version: 0,
+  state: {
+    employees: [
+      { id: 1, name: 'Sarah Ahmed Al-Harbi', jobNumber: 'AIGH-1001', fileNo: 'F-1001', jobTitle: 'Registered Nurse' },
+      { id: 2, name: 'Mohammed Al-Rashid Al-Qahtani', jobNumber: '1002', fileNo: 'F-1002', jobTitle: 'Head Nurse' },
+    ],
+  },
+}));
+const migrated = await bundle('src/lib/store.tsx', 'migrated');
+// persist may settle on a microtask; give rehydration a chance to finish.
+for (let i = 0; i < 20 && migrated.useStore.persist && !migrated.useStore.persist.hasHydrated(); i++) {
+  await new Promise(r => setTimeout(r, 5));
+}
+const rows = migrated.useStore.getState().employees;
+check('migrated File No. is plain', rows.map(e => e.fileNo).join(' ') === '1001 1002', rows.map(e => e.fileNo));
+check('migrated Job Number lost the retired AIGH- prefix', rows.map(e => e.jobNumber).join(' ') === '1001 1002', rows.map(e => e.jobNumber));
+check('migration kept the rest of the persisted row', rows[0].name === 'Sarah Ahmed Al-Harbi' && rows[0].jobTitle === 'Registered Nurse', rows[0]);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

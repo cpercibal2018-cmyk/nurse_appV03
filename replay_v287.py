@@ -4,7 +4,7 @@
     python3 replay_v287.py            # verify only (temp dir, nothing written here)
     python3 replay_v287.py --write    # also overwrite the checked-in v2.8.7 with the rebuild
 
-Runs patch_v287.py -> patch2 -> patch3 -> patch4 in a scratch directory (via the
+Runs patch_v287.py -> patch2 -> patch3 -> patch4 -> patch5 in a scratch directory (via the
 AIGH_ROOT override every script honours), then compares SHA-256 against the
 delivered document and re-runs verify_integration.py on the rebuild.
 """
@@ -19,7 +19,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 SRC = HERE / 'uploads' / 'AIGH_Nursing_Workforce_Management_System_v2_8_6.md'
 DELIVERED = HERE / 'AIGH_Nursing_Workforce_Management_System_v2_8_7.md'
-CHAIN = ['patch_v287.py', 'patch2_v287.py', 'patch3_v287.py', 'patch4_v287.py']
+CHAIN = ['patch_v287.py', 'patch2_v287.py', 'patch3_v287.py', 'patch4_v287.py', 'patch5_v287.py']
 
 
 def sha256(p: pathlib.Path) -> str:

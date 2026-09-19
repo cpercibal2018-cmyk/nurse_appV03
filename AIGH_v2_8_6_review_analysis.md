@@ -17,9 +17,10 @@
 > | 1 | 2.8.7 (41 patches) | P0 F-01…F-08, plus F-21, F-22 |
 > | 2 | 2.8.7 (40 patches) | P1 F-09…F-20, P2 F-24…F-32 |
 > | 3 | 2.8.7a (9 patches) | F-01 reframed as runtime configuration; F-19 residency allowlist corrected (KSA-only) |
-> | 4 | 2.8.7b (11 patches) | F-23 backup/restore scripts |
+> | 4 | 2.8.7b (12 patches) | F-23 backup/restore scripts |
+> | 5 | 2.8.7c (11 patches) | F-33–F-38 employee record shape, Hijri contract dates, contract guards |
 >
-> **Verification:** `verify_integration.py` reports **32 / 32 integrated, 0 open**; replaying the four patch scripts against the untouched v2.8.6 source reproduces the delivered document byte-for-byte. See `AIGH_v2_8_7_integration_verification.md`.
+> **Verification:** `verify_integration.py` reports **38 / 38 integrated, 0 open**; replaying the five patch scripts against the untouched v2.8.6 source reproduces the delivered document byte-for-byte. See `AIGH_v2_8_7_integration_verification.md`.
 >
 > **Scope note:** closure means the *specification* no longer contains the defect. Findings whose fix requires code, deployment or a hospital decision carry a residual task in `AIGH_v2_8_7_remediation_tracker.md` (items B-02…B-26) — the status lines below name the artifact, not a claim that the running system is production-ready.
 

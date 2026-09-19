@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-18
 **Branch:** arena/01a0b647-workspace
-**Spec Version:** 2.8.7b (8,789 lines, 102 patches across 4 passes, 32/32 review findings closed, 44/44 kit checks, byte-identical replay proven)
+**Spec Version:** 2.8.7c (8,869 lines, 113 patches across 5 passes, 38/38 review findings closed, 44/44 kit checks, byte-identical replay proven)
 **Web App:** `app/` — React/Vite/TS/Ant Design — Production build passes — Entry bundle 66KB gz MET (was 266KB Unmet)
 
 ---
@@ -13,10 +13,10 @@
 
 | Area | Contents | Status |
 | :--- | :--- | :--- |
-| **Specification** | `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` (424KB, rev 2.8.7b) — single authoritative reference for functional spec, technical architecture, implementation guide | ✅ Complete, 39 implementation spec sections |
+| **Specification** | `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` (430KB, rev 2.8.7c) — single authoritative reference for functional spec, technical architecture, implementation guide | ✅ Complete, 39 implementation spec sections |
 | **Source spec** | `uploads/AIGH_Nursing_Workforce_Management_System_v2_8_6.md` (384KB) — untouched source, never edited | ✅ Untouched |
-| **Patch chain** | `patch_v287.py` → `patch2_v287.py` → `patch3_v287.py` → `patch4_v287.py` (102 patches) — re-runnable generators, paths relative via AIGH_ROOT, replay_v287.py proves SHA-256 identity | ✅ Byte-identical |
-| **Verifiers** | `verify_integration.py` (32/32 findings), `wave1a-kit/scripts/verify-kit.mjs` (44/44 checks), `replay_v287.py` | ✅ All pass |
+| **Patch chain** | `patch_v287.py` → `patch2_v287.py` → `patch3_v287.py` → `patch4_v287.py` → `patch5_v287.py` (113 patches) — re-runnable generators, paths relative via AIGH_ROOT, replay_v287.py proves SHA-256 identity | ✅ Byte-identical |
+| **Verifiers** | `verify_integration.py` (38/38 findings), `wave1a-kit/scripts/verify-kit.mjs` (44/44 checks), `replay_v287.py` | ✅ All pass |
 | **Review docs** | `AIGH_v2_8_6_review_analysis.md` (F-01…F-32), `AIGH_v2_8_7_remediation_tracker.md` (Waves 0-4, U1-U3 gates), `AIGH_v2_8_7_integration_verification.md`, Phase1 plan, U1/U2/U3 decision packs | ✅ 32/32 closed |
 | **Gate1 kit** | `gate1-kit/` 10 bash scripts + 4 SQL — PostgreSQL 15 backup/WAL archive/PITR restore/failure drill | ✅ Scripts pass bash -n, fixed in 2.8.7b (F-23) |
 | **Gate1 drill** | `gate1-drill/` logs, public key, signed evidence .md — backup.log, postgres.log, gate1-evidence.md, gate1-failure-evidence.md — 120/245/47/582 counts consistent, RPO 298s ≤300s | ✅ Evidence consistent, operator/reviewer sign-off empty |
@@ -172,7 +172,7 @@ npm run preview      # preview production build
 
 ```bash
 python3 replay_v287.py                     # patch chain reproduces v2.8.7 byte-for-byte SHA-256
-python3 verify_integration.py              # 32/32 findings integrated
+python3 verify_integration.py              # 38/38 findings integrated
 cd wave1a-kit && node scripts/verify-kit.mjs .   # 44/44 static checks
 cd app && npm run build && node scripts/check-bundle-size.mjs  # bundle budget MET
 ```

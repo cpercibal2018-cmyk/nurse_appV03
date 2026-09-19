@@ -3,7 +3,7 @@
 
 **Purpose:** get a signed hosting decision by **Day 10**, or the on-premise default applies automatically.
 **Owner:** Hospital CIO / IT Director · **Escalation:** Hospital Executive Committee
-**Status:** prepared 18 September 2026 · specification rev 2.8.7b
+**Status:** prepared 18 September 2026 · specification rev 2.8.7c
 
 ---
 

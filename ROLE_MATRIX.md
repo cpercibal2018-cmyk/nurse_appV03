@@ -1,4 +1,4 @@
-# AIGH NurseApp — User Role Matrix (Spec v2.8.7b §8)
+# AIGH NurseApp — User Role Matrix (Spec v2.8.7c §8)
 
 Source: `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` lines 5240-5450 + position directory §3.1.1 + DB privilege separation §10.7
 

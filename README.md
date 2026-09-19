@@ -1,13 +1,13 @@
 # AIGH Nursing Workforce Management System — workspace
 
 Specification, review, remediation and Gate 1 evidence for the AIGH nursing
-workforce system (spec rev **2.8.7b**).
+workforce system (spec rev **2.8.7c**).
 
 | Path | What it is |
 | :--- | :--- |
 | `uploads/AIGH_..._v2_8_6.md` | Untouched source specification (never edited) |
 | `AIGH_..._v2_8_7.md` | Corrected specification — **generated** from v2.8.6 by the patch chain |
-| `patch_v287.py` → `patch2` → `patch3` → `patch4` | The patch chain (102 patches). Paths are relative to the script; override with `AIGH_ROOT` |
+| `patch_v287.py` → `patch2` → `patch3` → `patch4` → `patch5` | The patch chain (113 patches). Paths are relative to the script; override with `AIGH_ROOT` |
 | `replay_v287.py` | Rebuilds v2.8.7 in a temp dir and asserts SHA-256 identity with the committed file |
 | `verify_integration.py` | Asserts all 32 review findings (F-01…F-32) are present in v2.8.7 |
 | `AIGH_v2_8_6_review_analysis.md` | Independent review; `annotate_review_closure.py` adds closure status |
@@ -22,7 +22,7 @@ workforce system (spec rev **2.8.7b**).
 
 ```bash
 python3 replay_v287.py                     # patch chain reproduces v2.8.7 byte-for-byte
-python3 verify_integration.py              # 32/32 findings integrated
+python3 verify_integration.py              # 38/38 findings integrated
 cd wave1a-kit && node scripts/verify-kit.mjs .   # 44/44 static checks
 ```
 

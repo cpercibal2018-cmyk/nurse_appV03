@@ -268,7 +268,7 @@ condition that used to break archiving):
 ## 10. Re-verification
 
 ```bash
-cd /home/user && python3 verify_integration.py           # expect 32/32 integrated
+cd /home/user && python3 verify_integration.py           # expect 38/38 integrated
 cd /home/user/wave1a-kit && node scripts/verify-kit.mjs .  # Wave 1A kit checks
 cd /home/user/gate1-kit && bash scripts/pitr-proof.sh          # expect "PITR PROOF PASSED"
 cd /home/user/gate1-kit && bash scripts/failure-drill.sh --all  # expect "Failure drill PASS"

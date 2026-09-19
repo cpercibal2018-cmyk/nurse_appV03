@@ -1,9 +1,9 @@
 # AIGH Nursing Workforce Management System — Web Application
 
-**Version:** 2.8.7b — Full implementation of 39 specification sections
+**Version:** 2.8.7c — Full implementation of 39 specification sections
 **Stack:** React / Vite / TypeScript / Ant Design, Zustand, React Query, i18next
 **Baseline:** Node 22 / PostgreSQL 15 target (spec production target Node 20 / PG 15)
-**Spec:** `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` (8,789 lines, 102 patches, 32/32 findings closed)
+**Spec:** `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` (8,869 lines, 113 patches, 38/38 findings closed)
 
 ---
 
@@ -245,4 +245,4 @@ Blue/green (target): parallel Blue Green envs, load balancer routes 100% Blue, d
 
 ---
 
-**Prepared:** 2026-09-18 — Spec rev 2.8.7b — 102 patches byte-identical replay proven — 32/32 findings closed — 44/44 kit checks pass — Bundle entry 66KB MET (was 266KB Unmet)
+**Prepared:** 2026-09-18 — Spec rev 2.8.7c — 113 patches byte-identical replay proven — 38/38 findings closed — 44/44 kit checks pass — Bundle entry 66KB MET (was 266KB Unmet)

@@ -2,7 +2,7 @@
 
 **Reference implementations for the 12 decision-independent tasks** listed in `AIGH_v2_8_7_remediation_tracker.md` (Wave 1A). None of these require the hosting decision, hospital credentials, or production data — they run against the KSA sandbox with synthetic data.
 
-**Basis:** specification rev 2.8.7b · prepared 18 September 2026
+**Basis:** specification rev 2.8.7c · prepared 18 September 2026
 **Runtime:** Node 20 LTS · PostgreSQL 15 (production target)
 
 > **These are reference implementations, not a patch series.** Paths mirror the module layout in §2.3 of the specification so the files can be dropped into the reviewed application package. Where a file replaces an existing one, the header states what changed and why. Review each against your actual code before merging — the reviewed application package was not available in this workspace, so class/property names (`GracePeriodService`, `AuditService.logDomainEvent`, Prisma model casing) assume the conventions used in the specification.

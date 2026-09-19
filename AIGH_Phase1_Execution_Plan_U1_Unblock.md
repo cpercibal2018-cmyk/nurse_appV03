@@ -1,6 +1,6 @@
 # Phase 1 Execution Plan — Taking the Hosting Decision Off the Critical Path
 
-**Companion to:** `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` (rev 2.8.7b) · `AIGH_v2_8_7_remediation_tracker.md` · `AIGH_U1_Hosting_Decision_Pack.md` (signature-ready memo for the CIO)
+**Companion to:** `AIGH_Nursing_Workforce_Management_System_v2_8_7.md` (rev 2.8.7c) · `AIGH_v2_8_7_remediation_tracker.md` · `AIGH_U1_Hosting_Decision_Pack.md` (signature-ready memo for the CIO)
 **Prepared:** 18 September 2026
 
 ---

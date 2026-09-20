@@ -134,15 +134,20 @@ export const EMPLOYEES_SEED = [
   { id: 8, firstName: 'David', middleName: '', lastName: 'Lee', name: 'David Lee', jobNumber: '4008', jobTitle: 'Nursing Supervisor', fileNo: '4008', rankGrade: 'Grade 11', nationality: 'British', jobPostLocation: 'Buraydah', actualWorkPlace: 'Nursing Admin', specialty: 'Management', maritalStatus: 'Married', salary: 15000, unitId: 21, position: 'NS', contactEmail: 'david.lee@aigh.sa', status: 'Active', hireDate: '2020-05-22' },
 ];
 
+// Status spread demonstrates every renewal path. Employees 4 and 5 keep an
+// Active contract with a future end date (current coverage — they are NOT due
+// for renewal and do not appear in the Renew list). The other six carry the
+// renewal-intended statuses (Expired / Suspended / Terminated / Superseded),
+// so they populate the Renew Contract dropdown.
 export const CONTRACTS_SEED = [
-  { id: 1, employeeId: 1, startDate: '2023-01-15', endDate: '2026-01-14', status: 'Active' },
-  { id: 2, employeeId: 2, startDate: '2022-06-01', endDate: '2026-05-31', status: 'Active' },
-  { id: 3, employeeId: 3, startDate: '2023-03-10', endDate: '2026-03-09', status: 'Active' },
+  { id: 1, employeeId: 1, startDate: '2023-01-15', endDate: '2026-01-14', status: 'Expired' },
+  { id: 2, employeeId: 2, startDate: '2022-06-01', endDate: '2026-05-31', status: 'Suspended' },
+  { id: 3, employeeId: 3, startDate: '2023-03-10', endDate: '2026-03-09', status: 'Terminated' },
   { id: 4, employeeId: 4, startDate: '2024-01-20', endDate: '2027-01-19', status: 'Active' },
   { id: 5, employeeId: 5, startDate: '2021-11-05', endDate: '2026-11-04', status: 'Active' },
-  { id: 6, employeeId: 6, startDate: '2023-07-12', endDate: '2026-07-11', status: 'Active' },
-  { id: 7, employeeId: 7, startDate: '2022-09-18', endDate: '2025-12-18', status: 'Active' },
-  { id: 8, employeeId: 8, startDate: '2020-05-22', endDate: '2026-05-21', status: 'Active' },
+  { id: 6, employeeId: 6, startDate: '2023-07-12', endDate: '2026-07-11', status: 'Superseded' },
+  { id: 7, employeeId: 7, startDate: '2022-09-18', endDate: '2025-12-18', status: 'Expired' },
+  { id: 8, employeeId: 8, startDate: '2020-05-22', endDate: '2026-05-21', status: 'Terminated' },
 ];
 
 export const CREDENTIAL_REQUIREMENTS_SEED = [

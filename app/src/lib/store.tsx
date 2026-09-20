@@ -309,7 +309,7 @@ export const normalizePersistedEmployees = <T extends { fileNo?: string; jobNumb
     : employees;
 
 /** Bumped whenever a `migrate` step is added; persisted data at an older version is migrated on rehydrate. */
-export const STORE_VERSION = 1;
+export const STORE_VERSION = 2;
 
 export const useStore = create<Store>()(
   persist(
@@ -1037,10 +1037,18 @@ export const useStore = create<Store>()(
       // Sessions persisted before 2.8.7c hold the formatted demo identifiers.
       // Without this step localStorage silently outranks seed.ts and an
       // already-open browser never sees the plain File No.
-      migrate: (persistedState) => {
-        const persisted = persistedState as { employees?: Employee[] } | undefined;
+      migrate: (persistedState, version) => {
+        const persisted = persistedState as { employees?: Employee[]; contracts?: Contract[] } | undefined;
         if (!persisted) return persistedState as Store;
-        return { ...persisted, employees: normalizePersistedEmployees(persisted.employees) } as Store;
+        const migrated: any = { ...persisted, employees: normalizePersistedEmployees(persisted.employees) };
+        // v2: seed.ts now spreads contract statuses across the renewal states
+        // (Expired / Suspended / Terminated / Superseded + Active). A browser
+        // persisted at v1 still holds the old all-Active contracts and would
+        // silently outrank the seed, so replace them with the current seed.
+        if (version < 2) {
+          migrated.contracts = CONTRACTS_SEED as Contract[];
+        }
+        return migrated as Store;
       },
       partialize: (state) => ({
         departments: state.departments,

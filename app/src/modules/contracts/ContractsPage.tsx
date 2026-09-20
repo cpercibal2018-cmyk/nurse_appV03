@@ -4,7 +4,7 @@ import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOu
 import { useStore, getContractCopyBytes, MAX_CONTRACT_COPY_BYTES } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
-import { latestContractFor, renewalPeriodAfter, checkContractCopyCandidate, CONTRACT_COPY_ACCEPT, PDF_MAGIC } from '../../lib/contracts';
+import { latestContractFor, isEmployeeRenewable, renewalPeriodAfter, checkContractCopyCandidate, CONTRACT_COPY_ACCEPT, PDF_MAGIC } from '../../lib/contracts';
 
 const { Title, Text } = Typography;
 
@@ -94,17 +94,9 @@ export default function ContractsPage() {
     // Newest hires first so "just onboarded" are easy to find
     .sort((a, b) => String((b as any).hireDate || '').localeCompare(String((a as any).hireDate || '')));
 
-  const RENEWAL_INTENDED_STATUSES = ['Expired', 'Suspended', 'Terminated', 'Superseded'];
-  const renewableEmployees = employees.filter(e => {
-    if ((e as any).deletedAt) return false;
-    const latest = latestContractFor(contracts, e.id);
-    if (!latest) return false;
-    if (RENEWAL_INTENDED_STATUSES.includes(latest.status)) return true;
-    if (['Approved', 'Active'].includes(latest.status)) {
-      return new Date(latest.endDate) < new Date(new Date().toDateString());
-    }
-    return false;
-  });
+  const renewableEmployees = employees.filter(
+    e => !(e as any).deletedAt && isEmployeeRenewable(contracts, e.id),
+  );
 
   const renewEmployeeId = Form.useWatch('employeeId', renewForm);
   const renewStartWatch = Form.useWatch('startDate', renewForm);

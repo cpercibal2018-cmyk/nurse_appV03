@@ -21,6 +21,7 @@ export interface ContractPeriod {
  * no longer provide it.
  */
 export const COVERAGE_STATUSES = ['Approved', 'Active'] as const;
+export const RENEWAL_ELIGIBLE_STATUSES = ['Expired', 'Suspended', 'Terminated', 'Superseded'] as const;
 
 export function providesCoverage(status: string): boolean {
   return (COVERAGE_STATUSES as readonly string[]).includes(status);
@@ -44,6 +45,38 @@ export function latestContractFor<T extends ContractPeriod>(contracts: T[], empl
     (latest, c) => (!latest || new Date(c.endDate) > new Date(latest.endDate) ? c : latest),
     undefined,
   );
+}
+
+/** Compare ISO calendar dates without converting date-only values through UTC. */
+export function localIsoDate(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * An employee can be renewed only after all Approved/Active coverage has
+ * ended. This checks every coverage period so a stale "latest" row cannot
+ * hide a current or future period.
+ */
+export function isEmployeeRenewable<T extends ContractPeriod>(
+  contracts: T[],
+  employeeId: number,
+  today = new Date(),
+): boolean {
+  const mine = contracts.filter(c => c.employeeId === employeeId);
+  const latest = latestContractFor(mine, employeeId);
+  if (!latest) return false;
+
+  const todayIso = localIsoDate(today);
+  const hasCurrentOrFutureCoverage = mine.some(
+    c => providesCoverage(c.status) && c.endDate >= todayIso,
+  );
+  if (hasCurrentOrFutureCoverage) return false;
+
+  return (RENEWAL_ELIGIBLE_STATUSES as readonly string[]).includes(latest.status)
+    || (providesCoverage(latest.status) && latest.endDate < todayIso);
 }
 
 const MS_PER_DAY = 86400000;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker, Alert, Typography, Descriptions, Row, Col, message, Tooltip, Upload } from 'antd';
-import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined, InboxOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined, InboxOutlined, PaperClipOutlined, EyeOutlined } from '@ant-design/icons';
 import { useStore, getContractCopyBytes, MAX_CONTRACT_COPY_BYTES } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
@@ -34,6 +34,18 @@ export default function ContractsPage() {
       const a = document.createElement('a');
       a.href = url; a.download = attachment.fileName; a.click();
       URL.revokeObjectURL(url);
+    } catch (e: any) { message.error(e.message); }
+  };
+
+  // Open the signed contract PDF in a new browser tab for inline viewing.
+  const viewCopy = (attachment: any) => {
+    try {
+      const bytes = getContractCopyBytes(attachment.id, attachment.scanStatus);
+      const url = URL.createObjectURL(new Blob([bytes as any], { type: 'application/pdf' }));
+      const w = window.open(url, '_blank');
+      if (!w) message.warning('Pop-up blocked — allow pop-ups to view the contract copy');
+      // Revoke after the tab has had time to load the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e: any) { message.error(e.message); }
   };
 
@@ -196,7 +208,7 @@ export default function ContractsPage() {
       }
     },
     {
-      title: 'Contract Copy', key: 'contractCopy', width: 190,
+      title: 'Contract Copy', key: 'contractCopy', width: 230,
       render: (_: any, r: any) => {
         const copies = r.contractCopy ?? [];
         if (copies.length === 0) return <Tag>none</Tag>;
@@ -212,6 +224,9 @@ export default function ContractsPage() {
                 {latest.scanStatus}
               </Tag>
               <Text style={{ fontSize: 11 }}>v{latest.version} · {(latest.sizeBytes / 1024).toFixed(0)} KB</Text>
+              <Tooltip title={latest.scanStatus === 'CLEAN' ? 'View the contract copy' : 'Not viewable — an unscanned or infected file is never handed out (§5.3.2)'}>
+                <Button size="small" icon={<EyeOutlined />} disabled={latest.scanStatus !== 'CLEAN'} onClick={() => viewCopy(latest)} />
+              </Tooltip>
               <Tooltip title={latest.scanStatus === 'CLEAN' ? 'Download the contract copy' : 'Not downloadable — an unscanned or infected file is never handed out (§5.3.2)'}>
                 <Button size="small" icon={<DownloadOutlined />} disabled={latest.scanStatus !== 'CLEAN'} onClick={() => downloadCopy(latest)} />
               </Tooltip>

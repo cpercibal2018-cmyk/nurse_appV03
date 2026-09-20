@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Tag, Space, Input, Select, Modal, Form, message, Typography, Alert, Tooltip, Badge, Row, Col, DatePicker, InputNumber } from 'antd';
-import { PlusOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Tag, Space, Input, Select, Modal, Form, message, Typography, Alert, Tooltip, Badge, Row, Col, DatePicker, InputNumber, Descriptions } from 'antd';
+import { PlusOutlined, SearchOutlined, TeamOutlined, EyeOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
 import { toHijri, toHijriShort, toHijriIso } from '../../lib/hijri';
 import { UNASSIGNED_UNIT_ID, DEFAULT_ONBOARD_POSITION } from '../../data/seed';
@@ -19,12 +19,21 @@ const MARITAL_STATUSES = [
 ];
 
 export default function WorkforcePage() {
-  const { employees, units, positions, contracts, credentials, eligibilityStates, addEmployee, deleteEmployee } = useStore();
+  const { employees, units, positions, contracts, credentials, eligibilityStates, addEmployee, updateEmployee, deleteEmployee } = useStore();
   const [search, setSearch] = useState('');
   const [filterUnit, setFilterUnit] = useState<number | undefined>();
   const [filterPosition, setFilterPosition] = useState<string | undefined>();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewEmp, setViewEmp] = useState<any>(null);
+  const [editEmp, setEditEmp] = useState<any>(null);
   const [form] = Form.useForm();
+  const [editForm] = Form.useForm();
+
+  // Auto Full Name for the edit form (same rule as onboarding).
+  const eFirst = Form.useWatch('firstName', editForm);
+  const eMiddle = Form.useWatch('middleName', editForm);
+  const eLast = Form.useWatch('lastName', editForm);
+  const eFullName = [eFirst, eMiddle, eLast].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
   // Auto Full Name = First + Middle + Last
   const firstName = Form.useWatch('firstName', form);
@@ -86,6 +95,30 @@ export default function WorkforcePage() {
     }
   };
 
+  const openEdit = (emp: any) => {
+    setEditEmp(emp);
+    editForm.setFieldsValue({
+      firstName: emp.firstName, middleName: emp.middleName, lastName: emp.lastName,
+      jobNumber: emp.jobNumber, jobTitle: emp.jobTitle, fileNo: emp.fileNo, rankGrade: emp.rankGrade,
+      nationality: emp.nationality, jobPostLocation: emp.jobPostLocation, actualWorkPlace: emp.actualWorkPlace,
+      specialty: emp.specialty, maritalStatus: emp.maritalStatus, salary: emp.salary,
+      unitId: emp.unitId, position: emp.position, contactEmail: emp.contactEmail,
+    });
+  };
+
+  const handleUpdate = async () => {
+    try {
+      const v = await editForm.validateFields();
+      const name = [v.firstName, v.middleName, v.lastName].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      updateEmployee(editEmp.id, { ...v, name });
+      message.success(`Employee ${name} (${v.jobNumber}) updated`);
+      setEditEmp(null);
+    } catch (err: any) {
+      if (err?.errorFields) return; // form validation, messages shown inline
+      message.error(err.message || 'Update failed');
+    }
+  };
+
   const columns = [
     { title: 'Job Number', dataIndex: 'jobNumber', key: 'jobNumber', width: 100, sorter: (a: any, b: any) => String(a.jobNumber).localeCompare(String(b.jobNumber)), render: (jn: string) => <Tag color="blue">{jn}</Tag> },
     { title: 'Full Name', key: 'fullName', width: 180, render: (_: any, r: any) => <><Text strong>{r.name}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{r.firstName} {r.middleName || ''} {r.lastName}</Text></>, sorter: (a: any, b: any) => a.name.localeCompare(b.name) },
@@ -132,9 +165,11 @@ export default function WorkforcePage() {
       }
     },
     {
-      title: 'Actions', key: 'actions', width: 80, fixed: 'right' as any, render: (_: any, r: any) => (
-        <Space>
-          <Button size="small" danger onClick={() => {
+      title: 'Actions', key: 'actions', width: 220, fixed: 'right' as any, render: (_: any, r: any) => (
+        <Space size={4} wrap>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => setViewEmp(r)}>View Data</Button>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>Edit Data</Button>
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
             Modal.confirm({
               title: 'Soft delete employee?',
               content: `Employee ${r.name} (${r.jobNumber}) will be marked deleted but remain in audit history.`,
@@ -242,6 +277,95 @@ export default function WorkforcePage() {
             <Col span={8}><Form.Item name="unitId" label="Nursing Unit (FK) — defaults to Unassigned" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={[{ label: 'Unassigned — not yet placed in a unit', value: UNASSIGNED_UNIT_ID }, ...units.filter(u => u.isActive).map(u => ({ label: `${u.code} - ${u.name}`, value: u.id }))]} /></Form.Item></Col>
             <Col span={8}><Form.Item name="position" label="Position (FK active only) — defaults to SN" rules={[{ required: true }]}><Select showSearch options={activePositions.map(p => ({ label: `${p.code} - ${p.fullTitle}`, value: p.code }))} /></Form.Item></Col>
             <Col span={8}><Form.Item name="contactEmail" label="Contact Email" rules={[{ required: true, type: 'email' }]}><Input placeholder="name@aigh.sa" /></Form.Item></Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      {/* ── View employee data (read-only) ─────────────────────────────────── */}
+      <Modal
+        title={viewEmp ? `Employee Data — ${viewEmp.name} (${viewEmp.jobNumber})` : ''}
+        open={!!viewEmp}
+        onCancel={() => setViewEmp(null)}
+        footer={<Button onClick={() => setViewEmp(null)}>Close</Button>}
+        width={760}
+      >
+        {viewEmp && (() => {
+          const c = contracts.find(cc => cc.employeeId === viewEmp.id && (cc.status === 'Active' || cc.status === 'Approved'));
+          const u = units.find(uu => uu.id === viewEmp.unitId);
+          const p = positions.find(pp => pp.code === viewEmp.position);
+          const elig = eligibilityStates.find(es => es.employeeId === viewEmp.id);
+          return (
+            <Descriptions bordered size="small" column={2}>
+              <Descriptions.Item label="Full Name" span={2}>{viewEmp.name}</Descriptions.Item>
+              <Descriptions.Item label="First Name">{viewEmp.firstName || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Middle Name">{viewEmp.middleName || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Last Name">{viewEmp.lastName || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Job Number">{viewEmp.jobNumber}</Descriptions.Item>
+              <Descriptions.Item label="Job Title">{viewEmp.jobTitle || '-'}</Descriptions.Item>
+              <Descriptions.Item label="File No.">{viewEmp.fileNo || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Rank/Grade">{viewEmp.rankGrade || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Nationality">{viewEmp.nationality || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Job Post (City)">{viewEmp.jobPostLocation || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Actual Work Place">{viewEmp.actualWorkPlace || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Specialty">{viewEmp.specialty || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Unit">{u ? `${u.code} — ${u.name}` : 'Unassigned'}</Descriptions.Item>
+              <Descriptions.Item label="Position">{p ? `${p.code} — ${p.fullTitle}` : viewEmp.position}</Descriptions.Item>
+              <Descriptions.Item label="Marital Status">{viewEmp.maritalStatus || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Salary (SAR)">{typeof viewEmp.salary === 'number' ? `${viewEmp.salary.toLocaleString('en-US')} SAR` : '-'}</Descriptions.Item>
+              <Descriptions.Item label="Contact Email" span={2}>{viewEmp.contactEmail || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Contract Start">{c ? `${c.startDate} · ${c.startDateHijri || toHijriShort(c.startDate)} هـ` : 'No coverage'}</Descriptions.Item>
+              <Descriptions.Item label="Contract End">{c ? `${c.endDate} · ${c.endDateHijri || toHijriShort(c.endDate)} هـ` : '-'}</Descriptions.Item>
+              <Descriptions.Item label="Eligibility" span={2}>
+                {elig ? <Tag color={elig.status === 'ELIGIBLE' ? 'green' : elig.status === 'ELIGIBLE_WITH_GRACE' ? 'orange' : 'red'}>{elig.status}</Tag> : <Tag>Unknown</Tag>}
+                {elig?.reasons?.length ? <Text type="secondary" style={{ fontSize: 12 }}> {elig.reasons.join(', ')}</Text> : null}
+              </Descriptions.Item>
+            </Descriptions>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Edit employee data ─────────────────────────────────────────────── */}
+      <Modal
+        title={editEmp ? `Edit Employee — ${editEmp.name} (${editEmp.jobNumber})` : ''}
+        open={!!editEmp}
+        onCancel={() => setEditEmp(null)}
+        onOk={handleUpdate}
+        okText="Save Changes"
+        width={900}
+        destroyOnClose
+      >
+        <Form form={editForm} layout="vertical">
+          <Alert type="info" showIcon style={{ marginBottom: 16 }} message="Edit employee data" description="Full Name is recomputed from First + Middle + Last. Contract dates are managed on the Contracts page and are not edited here." />
+          <Row gutter={16}>
+            <Col span={8}><Form.Item name="firstName" label="First Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="middleName" label="Middle Name"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="lastName" label="Last Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
+          </Row>
+          <Form.Item label="Full Name (Auto = First + Middle + Last)">
+            <Input value={eFullName} readOnly style={{ background: '#f5f5f5', fontWeight: 'bold' }} />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={8}><Form.Item name="jobNumber" label="Job Number" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="jobTitle" label="Job Title" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="fileNo" label="File No." rules={[{ required: true }]}><Input /></Form.Item></Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={8}><Form.Item name="rankGrade" label="Rank/Grade" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="nationality" label="Nationality" rules={[{ required: true }]}><Select showSearch options={NATIONALITIES} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="jobPostLocation" label="Job Post (City)" rules={[{ required: true }]}><Input /></Form.Item></Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}><Form.Item name="actualWorkPlace" label="Actual Work Place" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={12}><Form.Item name="specialty" label="Specialty" rules={[{ required: true }]}><Input /></Form.Item></Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}><Form.Item name="maritalStatus" label="Marital Status" rules={[{ required: true }]}><Select options={MARITAL_STATUSES} /></Form.Item></Col>
+            <Col span={12}><Form.Item name="salary" label="Salary (SAR)" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} min={0} addonAfter="SAR" /></Form.Item></Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={8}><Form.Item name="unitId" label="Nursing Unit" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={[{ label: 'Unassigned', value: UNASSIGNED_UNIT_ID }, ...units.filter(u => u.isActive).map(u => ({ label: `${u.code} - ${u.name}`, value: u.id }))]} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="position" label="Position" rules={[{ required: true }]}><Select showSearch options={activePositions.map(p => ({ label: `${p.code} - ${p.fullTitle}`, value: p.code }))} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="contactEmail" label="Contact Email" rules={[{ required: true, type: 'email' }]}><Input /></Form.Item></Col>
           </Row>
         </Form>
       </Modal>

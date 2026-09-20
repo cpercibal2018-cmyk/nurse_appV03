@@ -500,7 +500,7 @@ export default function ContractsPage() {
                 label: `${e.jobNumber} — ${e.name} [${(e as any).firstName} ${(e as any).middleName || ''} ${(e as any).lastName}] [${e.position}]${(e as any).hireDate ? ` · hired ${(e as any).hireDate}` : ''}`,
                 value: e.id,
               }))}
-              filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
+              filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
             />
           </Form.Item>
 

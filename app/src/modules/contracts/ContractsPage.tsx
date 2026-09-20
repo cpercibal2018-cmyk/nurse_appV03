@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker, Alert, Typography, Descriptions, Row, Col, message, Tooltip, Upload } from 'antd';
-import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined, InboxOutlined, PaperClipOutlined, EyeOutlined } from '@ant-design/icons';
+import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined, InboxOutlined, PaperClipOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useStore, getContractCopyBytes, MAX_CONTRACT_COPY_BYTES } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
@@ -17,6 +17,13 @@ export default function ContractsPage() {
   const [attachModal, setAttachModal] = useState<{ open: boolean; contractId: number | null }>({ open: false, contractId: null });
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const [form] = Form.useForm();
+
+  // Renew Contract is a separate, slimmer flow for an employee who already has a
+  // contract on record. It shares the store guards with Create, but its own
+  // modal/form/state keep the two from stepping on each other.
+  const [isRenewOpen, setIsRenewOpen] = useState(false);
+  const [renewForm] = Form.useForm();
+  const [renewCopy, setRenewCopy] = useState<File | null>(null);
 
   // Live Gregorian → Hijri (Umm al-Qura) conversion for the contract date pickers
   const startWatch = Form.useWatch('startDate', form);
@@ -67,6 +74,77 @@ export default function ContractsPage() {
       return;
     }
     form.setFieldsValue({ startDate: dayjs(next.start), endDate: dayjs(next.end) });
+  };
+
+  // ── Renew Contract (existing employee) ──────────────────────────────────────
+  // Only employees who already have a contract on record can be renewed — a
+  // brand-new hire is onboarded via Workforce → Onboard Employee. This is what
+  // separates the "old employee" flow from the "new employee" one.
+  const renewableEmployees = employees.filter(
+    e => !(e as any).deletedAt && latestContractFor(contracts, e.id),
+  );
+
+  const renewEmployeeId = Form.useWatch('employeeId', renewForm);
+  const renewStartWatch = Form.useWatch('startDate', renewForm);
+  const renewEndWatch = Form.useWatch('endDate', renewForm);
+  const renewSelectedEmployee = employees.find(e => e.id === renewEmployeeId);
+  const renewPriorContract = renewEmployeeId ? latestContractFor(contracts, renewEmployeeId) : undefined;
+
+  const openRenew = () => {
+    renewForm.resetFields();
+    setRenewCopy(null);
+    setIsRenewOpen(true);
+  };
+
+  // Picking the employee to renew carries their current period forward: the new
+  // term starts the day after the previous end and runs for the same length.
+  const onRenewEmployeeChange = (employeeId: number) => {
+    const next = renewalPeriodAfter(latestContractFor(contracts, employeeId));
+    if (!next) {
+      renewForm.setFieldsValue({ startDate: undefined, endDate: undefined });
+      return;
+    }
+    renewForm.setFieldsValue({ startDate: dayjs(next.start), endDate: dayjs(next.end) });
+  };
+
+  const handleRenew = async () => {
+    try {
+      const values = await renewForm.validateFields();
+      const employeeId = values.employeeId;
+      const emp = employees.find(e => e.id === employeeId);
+      if (!emp) throw new Error('Employee not found');
+      if (!latestContractFor(contracts, employeeId)) {
+        throw new Error('This employee has no contract to renew — use Create Contract instead');
+      }
+
+      const start = values.startDate.format('YYYY-MM-DD');
+      const end = values.endDate.format('YYYY-MM-DD');
+      if (new Date(end) <= new Date(start)) throw new Error('End must be after start');
+
+      if (!renewCopy) throw new Error('Contract copy [PDF] is required — attach the signed renewal before creating the record');
+
+      // The store re-checks the exclusion constraint and role scope, so the same
+      // guards that back Create Contract back the renewal too.
+      const newContractId = addContract({
+        employeeId,
+        startDate: start,
+        endDate: end,
+        status: values.status || 'Draft',
+      } as any);
+
+      const bytes = new Uint8Array(await renewCopy.arrayBuffer());
+      const attachment = attachContractCopy({
+        contractId: newContractId,
+        file: { name: renewCopy.name, type: renewCopy.type, bytes },
+      });
+
+      message.success(`Contract renewed for ${emp.name} — Job Number ${emp.jobNumber} — ${start} → ${end} — Status ${values.status || 'Draft'} — copy v${attachment.version} attached (${(attachment.sizeBytes / 1024).toFixed(0)} KB, scan ${attachment.scanStatus})`);
+      setIsRenewOpen(false);
+      renewForm.resetFields();
+      setRenewCopy(null);
+    } catch (err: any) {
+      message.error(err.message || 'Contract renewal failed');
+    }
   };
 
   const filtered = contracts.filter(c => {
@@ -266,7 +344,14 @@ export default function ContractsPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <Title level={4} style={{ margin: 0 }}><FileTextOutlined /> Contracts — HR Admin Enters Contract Data (Job Number from Contract)</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setContractCopy(null); setEditingContract(null); setIsModalOpen(true); }}>Create Contract (HR Admin)</Button>
+        <Space wrap>
+          <Tooltip title="New employee — create the first contract for someone being added to the system">
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setContractCopy(null); setEditingContract(null); setIsModalOpen(true); }}>Create Contract (New Employee)</Button>
+          </Tooltip>
+          <Tooltip title="Existing employee — renew the contract of someone already on record (only the new period is needed)">
+            <Button icon={<ReloadOutlined />} onClick={openRenew}>Renew Contract (Existing Employee)</Button>
+          </Tooltip>
+        </Space>
       </div>
 
       <Alert
@@ -481,6 +566,117 @@ export default function ContractsPage() {
             <Descriptions.Item label="Exclusion Constraint">GiST daterange && WHERE status IN (Approved,Active) — overlapping Approved/Active periods same employee rejected at DB level. Approved future can satisfy eligibility for shift within that future.</Descriptions.Item>
             <Descriptions.Item label="Scope">HR_ADMIN scoped create/approval/renewal/termination + full history + attachments, Supervisor scoped reduced read (identifiers, employee/position, unit, status, dates), Employee own reduced read. Server-evaluated scope — passing nurse ID from browser does NOT establish access.</Descriptions.Item>
           </Descriptions>
+        </Form>
+      </Modal>
+
+      {/* ── Renew Contract (existing employee) ─────────────────────────────── */}
+      <Modal
+        title={<Space><ReloadOutlined /> Renew Contract — Existing Employee</Space>}
+        open={isRenewOpen}
+        onCancel={() => setIsRenewOpen(false)}
+        onOk={handleRenew}
+        okText={<><ReloadOutlined /> Renew Contract</>}
+        width={640}
+        destroyOnClose
+      >
+        <Form form={renewForm} layout="vertical">
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Only the renewal details are needed"
+            description="Identity, unit, position and documents stay as they are on the employee's record — a renewal just adds the next contract period. For a brand-new hire, use Create Contract (New Employee) or Workforce → Onboard Employee instead."
+          />
+
+          <Form.Item
+            name="employeeId"
+            label="Employee to renew"
+            rules={[{ required: true, message: 'Select the employee whose contract is being renewed' }]}
+            extra="Only employees who already have a contract on record appear here."
+          >
+            <Select
+              showSearch
+              placeholder="Search by job number or name"
+              onChange={onRenewEmployeeChange}
+              notFoundContent="No employees with an existing contract"
+              options={renewableEmployees.map(e => ({ label: `${e.jobNumber} — ${e.name} [${e.position}] Unit ${e.unitId}`, value: e.id }))}
+              filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+
+          {renewSelectedEmployee && renewPriorContract && (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`Current contract on record — ${renewSelectedEmployee.name} (Job Number ${renewSelectedEmployee.jobNumber})`}
+              description={
+                <Descriptions size="small" column={2} bordered>
+                  <Descriptions.Item label="Start">
+                    <Text strong>{renewPriorContract.startDate}</Text>
+                    <br /><Text type="secondary">{renewPriorContract.startDateHijri || toHijriShort(renewPriorContract.startDate)} هـ</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="End">
+                    <Text strong>{renewPriorContract.endDate}</Text>
+                    <br /><Text type="secondary">{renewPriorContract.endDateHijri || toHijriShort(renewPriorContract.endDate)} هـ</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Status" span={2}>
+                    <Tag color={renewPriorContract.status === 'Active' ? 'green' : 'blue'}>{renewPriorContract.status}</Tag>
+                  </Descriptions.Item>
+                </Descriptions>
+              }
+            />
+          )}
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="startDate" label="New Contract Start" rules={[{ required: true }]} extra={renewStartWatch ? `Hijri: ${toHijri(renewStartWatch)}` : 'Pre-filled to the day after the current end. Adjust if the renewal differs.'}>
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="endDate" label="New Contract End" rules={[{ required: true }]} extra={renewEndWatch ? `Hijri: ${toHijri(renewEndWatch)}` : 'Must be after start. Overlapping Approved/Active periods are rejected.'}>
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item name="status" label="Initial Status" initialValue="Draft" rules={[{ required: true }]}>
+            <Select options={[
+              { label: 'Draft — No coverage', value: 'Draft' },
+              { label: 'PendingApproval — No coverage', value: 'PendingApproval' },
+              { label: 'Approved — Future coverage from the start date', value: 'Approved' },
+            ]} />
+          </Form.Item>
+
+          <Form.Item
+            label="Renewal Contract Copy [PDF] — required"
+            required
+            extra="PDF only · max 10 MB · magic-byte verified (§5.3.2) · each upload creates a new version (§5.3.1)"
+          >
+            <Upload.Dragger
+              accept={CONTRACT_COPY_ACCEPT}
+              maxCount={1}
+              showUploadList={{ showRemoveIcon: true }}
+              beforeUpload={async (file) => {
+                const quick = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size });
+                if (!quick.ok) { message.error(quick.message); return Upload.LIST_IGNORE; }
+                let head: Uint8Array;
+                try { head = new Uint8Array(await file.slice(0, PDF_MAGIC.length).arrayBuffer()); }
+                catch { message.error('The contract copy could not be read — try again'); return Upload.LIST_IGNORE; }
+                const verified = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size, head });
+                if (!verified.ok) { message.error(verified.message); return Upload.LIST_IGNORE; }
+                setRenewCopy(file as any);
+                return false;
+              }}
+              onRemove={() => { setRenewCopy(null); return true; }}
+              style={{ borderColor: renewCopy ? '#52c41a' : undefined }}
+            >
+              <p className="ant-upload-drag-icon"><FilePdfOutlined style={{ fontSize: 32, color: '#c00' }} /></p>
+              <p className="ant-upload-text">Click or drag the signed renewal PDF here</p>
+              <p className="ant-upload-hint">PDF files only (.pdf) · max 10 MB · content verified against %PDF- magic bytes</p>
+            </Upload.Dragger>
+          </Form.Item>
         </Form>
       </Modal>
     </div>

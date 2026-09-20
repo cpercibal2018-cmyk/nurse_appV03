@@ -1,0 +1,161 @@
+// AIGH Nursing Workforce — runnable backend schema.
+// Field names match the frontend data model so the API needs no mapping layer.
+// (The full 33-model reference schema lives in ../backend/prisma/schema.prisma.)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Department {
+  id          Int      @id
+  code        String   @unique
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   String?
+  units       Unit[]
+}
+
+model Unit {
+  id           Int     @id
+  code         String  @unique
+  name         String
+  departmentId Int
+  bedCount     Int     @default(0)
+  isActive     Boolean @default(true)
+  description  String?
+  department   Department @relation(fields: [departmentId], references: [id])
+}
+
+model Position {
+  code          String  @id
+  fullTitle     String
+  tier          String?
+  isSchedulable Boolean @default(true)
+  isActive      Boolean @default(true)
+  displayOrder  Int     @default(0)
+  description   String?
+}
+
+model Employee {
+  id                Int     @id
+  firstName         String?
+  middleName        String?
+  lastName          String?
+  name              String
+  jobNumber         String  @unique
+  jobTitle          String?
+  fileNo            String?
+  rankGrade         String?
+  nationality       String?
+  jobPostLocation   String?
+  actualWorkPlace   String?
+  specialty         String?
+  maritalStatus     String?
+  salary            Int?
+  unitId            Int     @default(0)
+  position          String  @default("SN")
+  contactEmail      String?
+  status            String  @default("Active")
+  hireDate          String?
+  contractStart     String?
+  contractEnd       String?
+  contractStartHijri String?
+  contractEndHijri   String?
+  deletedAt         String?
+}
+
+model Contract {
+  id             Int     @id
+  employeeId     Int
+  startDate      String
+  endDate        String
+  status         String  @default("Draft")
+  startDateHijri String?
+  endDateHijri   String?
+  jobNumber      String?
+  contractCopy   Json?
+}
+
+model CredentialCategory {
+  code         String @id
+  name         String
+  description  String?
+  displayOrder Int    @default(0)
+}
+
+model CredentialTemplate {
+  id             Int     @id
+  code           String  @unique
+  name           String
+  categoryCode   String
+  hasExpiry      Boolean @default(true)
+  requiresUpload Boolean @default(true)
+  description    String?
+  fields         Json?
+  displayOrder   Int     @default(0)
+  isActive       Boolean @default(true)
+}
+
+model CredentialRequirement {
+  id           Int      @id
+  templateId   Int
+  unitId       Int?
+  position     String?
+  isMandatory  Boolean  @default(true)
+  policyStatus String   @default("MANDATORY")
+}
+
+model Credential {
+  id             Int     @id
+  employeeId     Int
+  templateId     Int
+  validityStatus String  @default("PendingVerification")
+  issueDate      String?
+  expiryDate     String?
+  trackingData   Json?
+  verifiedBy     Int?
+  verifiedAt     String?
+  syncStatus     String?
+  lastSyncAttempt String?
+  evidence       Json?
+}
+
+model ShiftAssignment {
+  id         Int    @id @default(autoincrement())
+  employeeId Int
+  unitId     Int
+  shiftDate  String
+  shiftName  String
+  startTime  String
+  endTime    String
+  status     String @default("Draft")
+}
+
+model Notification {
+  id        Int     @id @default(autoincrement())
+  type      String?
+  title     String
+  message   String?
+  priority  String?
+  isRead    Boolean @default(false)
+  createdAt String?
+}
+
+model AuditEntry {
+  id           Int     @id @default(autoincrement())
+  actorId      Int?
+  action       String
+  resource     String
+  resourceId   String
+  changes      Json?
+  hash         String
+  previousHash String?
+  createdAt    String?
+  isEncrypted  Boolean @default(false)
+}

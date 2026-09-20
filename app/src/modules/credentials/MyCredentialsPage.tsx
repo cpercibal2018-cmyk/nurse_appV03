@@ -23,7 +23,7 @@ export default function MyCredentialsPage() {
   const [newFile, setNewFile] = useState<File | null>(null);
   const [form] = Form.useForm();
 
-  const templateName = (id: number) => { const t = credentialTemplates.find((x: any) => x.id === id); return t ? `${t.code} — ${t.name}` : `#${id}`; };
+  const templateName = (id?: number) => { const t = credentialTemplates.find((x: any) => x.id === id); return t ? `${t.code} — ${t.name}` : `#${id ?? '?'}`; };
 
   const download = (ev: any) => {
     try {

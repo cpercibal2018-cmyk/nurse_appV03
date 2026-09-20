@@ -28,3 +28,9 @@ dist-node/
 *.zip
 *.tsbuildinfo
 vite.config.d.ts
+
+# --- local env + logs ---
+.env
+.env.local
+*.log
+dev.err

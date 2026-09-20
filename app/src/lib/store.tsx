@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED, UNASSIGNED_UNIT_ID } from '../data/seed';
 import { toHijriIso } from './hijri';
 import { providesCoverage, periodsOverlap, checkContractCopyCandidate } from './contracts';
+import { api, API_ENABLED, syncWrite } from './api';
 
 export type Employee = {
   id: number;
@@ -183,6 +184,9 @@ type Store = {
   currentUser: { id: number; name: string; role: string; email: string } | null;
   csrfToken: string;
   login: (email: string, password: string) => boolean;
+  /** When the backend API is configured, replace seed slices with DB data. */
+  hydrateFromApi: () => Promise<void>;
+  apiHydrated: boolean;
   logout: () => void;
 
   // departments
@@ -327,6 +331,32 @@ export const useStore = create<Store>()(
         return true;
       },
       logout: () => set({ isAuthenticated: false, currentUser: null }),
+
+      apiHydrated: false,
+      hydrateFromApi: async () => {
+        if (!API_ENABLED) return;
+        try {
+          const b = await api.bootstrap();
+          set({
+            departments: b.departments ?? [],
+            units: b.units ?? [],
+            positions: b.positions ?? [],
+            employees: b.employees ?? [],
+            contracts: b.contracts ?? [],
+            credentialCategories: b.credentialCategories ?? [],
+            credentialTemplates: b.credentialTemplates ?? [],
+            credentialRequirements: b.credentialRequirements ?? [],
+            credentials: b.credentials ?? [],
+            shiftAssignments: b.shiftAssignments ?? [],
+            notifications: b.notifications?.length ? b.notifications : get().notifications,
+            auditEntries: b.auditEntries?.length ? b.auditEntries : get().auditEntries,
+            apiHydrated: true,
+          });
+          get().refreshAllEligibility();
+        } catch (e: any) {
+          console.warn('[api] hydrate failed — using local seed:', e.message);
+        }
+      },
 
       departments: DEPARTMENTS,
       addDepartment: (dept) => set((s) => {
@@ -549,17 +579,23 @@ export const useStore = create<Store>()(
           employees: [...s.employees, newEmployee],
           contracts: [...s.contracts, newContract],
         }));
+        // Persist to the database when the backend is configured.
+        syncWrite(api.create('employees', newEmployee));
+        syncWrite(api.create('contracts', newContract));
 
         get().addAuditEntry({ actorId: state.currentUser?.id || 1, action: 'EMPLOYEE_ONBOARDED', resource: 'employees', resourceId: String(newId), changes: { job_number: newEmployee.jobNumber, first_name: firstName, middle_name: middleName, last_name: lastName, full_name: fullName, job_title: jobTitle, file_no: fileNo, rank_grade: rankGrade, nationality, job_post_location: jobPostLocation, actual_work_place: actualWorkPlace, specialty, marital_status: maritalStatus, salary, contract_start: emp.contractStart, contract_end: emp.contractEnd, contract_start_hijri: newContract.startDateHijri, contract_end_hijri: newContract.endDateHijri, note: 'Job Number recorded verbatim as entered (plain number or text + number combination, no format rule). Full Name derived from First + Middle + Last. Contract dates recorded in both Gregorian and Hijri (Umm al-Qura).' } });
         get().refreshEligibility(newId);
         return newId;
       },
-      updateEmployee: (id, data) => set((s) => ({
-        employees: s.employees.map(e => e.id === id ? { ...e, ...data } : e)
-      })),
-      deleteEmployee: (id) => set((s) => ({
-        employees: s.employees.map(e => e.id === id ? { ...e, deletedAt: new Date().toISOString() } : e)
-      })),
+      updateEmployee: (id, data) => {
+        set((s) => ({ employees: s.employees.map(e => e.id === id ? { ...e, ...data } : e) }));
+        syncWrite(api.update('employees', id, data));
+      },
+      deleteEmployee: (id) => {
+        const deletedAt = new Date().toISOString();
+        set((s) => ({ employees: s.employees.map(e => e.id === id ? { ...e, deletedAt } : e) }));
+        syncWrite(api.update('employees', id, { deletedAt }));
+      },
 
       /**
        * Position Assignment — set an existing employee's position from the
@@ -642,16 +678,16 @@ export const useStore = create<Store>()(
         }
 
         const newId = Math.max(0, ...state.contracts.map(c => c.id)) + 1;
-        set((s) => ({
-          contracts: [...s.contracts, {
-            ...contract,
-            // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
-            // the onboarding path, so every contract carries both calendars.
-            startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
-            endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
-            id: newId,
-          }]
-        }));
+        const newContract = {
+          ...contract,
+          // Hijri (Umm al-Qura) equivalent recorded with the contract, same as
+          // the onboarding path, so every contract carries both calendars.
+          startDateHijri: contract.startDateHijri || toHijriIso(contract.startDate),
+          endDateHijri: contract.endDateHijri || toHijriIso(contract.endDate),
+          id: newId,
+        };
+        set((s) => ({ contracts: [...s.contracts, newContract] }));
+        syncWrite(api.create('contracts', newContract));
         return newId;
       },
 
@@ -868,11 +904,13 @@ export const useStore = create<Store>()(
       addShiftAssignment: (a) => {
         const id = Math.max(0, ...get().shiftAssignments.map(x => x.id)) + 1;
         set((s) => ({ shiftAssignments: [...s.shiftAssignments, { ...a, id }] }));
+        syncWrite(api.create('shift-assignments', { ...a, id }));
         return id;
       },
-      removeShiftAssignment: (id) => set((s) => ({
-        shiftAssignments: s.shiftAssignments.filter(x => x.id !== id)
-      })),
+      removeShiftAssignment: (id) => {
+        set((s) => ({ shiftAssignments: s.shiftAssignments.filter(x => x.id !== id) }));
+        syncWrite(api.remove('shift-assignments', id));
+      },
       publishAssignments: (ids) => {
         const state = get();
         let success = 0;

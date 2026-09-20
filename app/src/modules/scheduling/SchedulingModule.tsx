@@ -160,7 +160,7 @@ export default function SchedulingModule() {
         ? <Card><Empty description="No units with beds in this department" /></Card>
         : view === 'Week'
           ? <WeekBoard bUnits={bUnits} days={days} cellOf={cellOf} employees={employees} eligOf={eligOf} onAdd={openAssign} onRemove={removeShiftAssignment} />
-          : <MonthCalendar anchor={anchor} bUnits={bUnits} cellOf={cellOf} onPickDay={(d) => { setAnchor(d); setView('Week'); }} />}
+          : <MonthCalendar anchor={anchor} bUnits={bUnits} cellOf={cellOf} onPickDay={(d: Dayjs) => { setAnchor(d); setView('Week'); }} />}
 
       {/* Assign modal */}
       <Modal

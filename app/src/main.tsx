@@ -52,6 +52,11 @@ try {
 const savedLang = (localStorage.getItem('aigh-lang') as 'en' | 'ar') || 'en';
 setLanguage(savedLang);
 
+// When a backend is configured (VITE_API_URL), load data from the database.
+// No-op otherwise — the app runs standalone on its built-in seed data.
+import { useStore } from './lib/store';
+void useStore.getState().hydrateFromApi();
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

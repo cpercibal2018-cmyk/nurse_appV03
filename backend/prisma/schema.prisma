@@ -1,5 +1,7 @@
-// AIGH Nursing Workforce Management — Prisma Schema v2.8.7b
-// Role Matrix CRUD §8 + Position Directory §3.1.1 + Four-Eyes V42 + PAM V42 + Audit §9.1 + Idempotency B-08
+// AIGH Nursing Workforce Management — Prisma Schema v2.8.7c
+// Role Matrix §8 · Positions §3.1.1 · PAM V42 · Audit §9.1 · Idempotency B-08
+// + Credentials §5 · Eligibility §6 · Notifications §7 · Scheduling · Attendance §14.2
+// + Worker Leases V49 · Observability §10.8 · FHIR §14.1 · Break-Glass §3.6 · PDPL §8.3
 
 generator client {
   provider = "prisma-client-js"
@@ -69,8 +71,9 @@ model Unit {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  department   Department @relation(fields: [departmentId], references: [id])
-  employees    Employee[]
+  department       Department       @relation(fields: [departmentId], references: [id])
+  employees        Employee[]
+  bedCapacityLogs  BedCapacityLog[]
   @@map("units")
 }
 
@@ -125,9 +128,13 @@ model Employee {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  position     Position @relation(fields: [positionCode], references: [code])
-  unit         Unit     @relation(fields: [unitId], references: [id])
-  contracts    Contract[]
+  position          Position                   @relation(fields: [positionCode], references: [code])
+  unit              Unit                       @relation(fields: [unitId], references: [id])
+  contracts         Contract[]
+  credentials       EmployeeCredential[]
+  eligibilityState  EmployeeEligibilityState?
+  waivers           EligibilityWaiver[]
+  attendanceEvents  AttendanceEvent[]
 
   @@index([unitId])
   @@index([positionCode])
@@ -262,6 +269,478 @@ model IdempotencyKey {
   @@map("idempotency_keys")
 }
 
-// Additional: Bed capacity history B-24, Credential, etc omitted for brevity — see full spec
-// Note: Employee.jobNumber unique — job number is from the contract that to be entered, enforced by DB unique index + fn_onboard_employee_with_contract atomic
-// Contract.jobNumber denormalized for traceability, exclusion constraint GiST daterange && WHERE status IN (Approved,Active) rejects overlapping periods same employee at DB level
+// ══════════════════════════════════════════════════════════════════════
+//  BED CAPACITY LOG  §2.9 B-24
+// ══════════════════════════════════════════════════════════════════════
+
+model BedCapacityLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  unitId      String   @db.Uuid
+  oldCapacity Int
+  newCapacity Int
+  actor       String
+  reason      String?
+  changedAt   DateTime @default(now())
+
+  unit        Unit     @relation(fields: [unitId], references: [id])
+
+  @@map("bed_capacity_logs")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  CREDENTIALS  §5 · 5 categories · 16 templates
+// ══════════════════════════════════════════════════════════════════════
+
+enum CredStatus {
+  PENDING
+  VALID
+  EXPIRING_SOON
+  EXPIRED
+  REVOKED
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+}
+
+enum CredSyncStatus {
+  SYNCED
+  STALE
+  FAILED
+  PENDING
+}
+
+enum PolicyStatus {
+  MANDATORY
+  TRANSITION
+  OPTIONAL
+}
+
+model CredentialCategory {
+  id        String               @id // IDENTITY | LICENSURE | LIABILITY | COMPETENCY | LIFE_SUPPORT
+  name      String
+  templates CredentialTemplate[]
+
+  @@map("credential_categories")
+}
+
+model CredentialTemplate {
+  id             String   @id @default(uuid()) @db.Uuid
+  categoryId     String   // FK → credential_categories.id
+  name           String
+  hasExpiry      Boolean  @default(true)
+  requiresUpload Boolean  @default(false)
+  fieldDefs      Json     @default("[]") // [{name, type, isExpiryDate, isIssueDate, ...}]
+  displayOrder   Int      @default(0)
+  isActive       Boolean  @default(true)
+  graceDays      Int      @default(0)    // default grace; overridden per requirement
+  createdAt      DateTime @default(now())
+
+  category      CredentialCategory    @relation(fields: [categoryId], references: [id])
+  requirements  CredentialRequirement[]
+  employeeCreds EmployeeCredential[]
+
+  @@map("credential_templates")
+}
+
+model CredentialRequirement {
+  id                 String       @id @default(uuid()) @db.Uuid
+  templateId         String       @db.Uuid
+  positionCode       String?      // null = all positions
+  unitId             String?      @db.Uuid // null = all units
+  isMandatory        Boolean      @default(true)
+  policyStatus       PolicyStatus @default(MANDATORY)
+  transitionDeadline DateTime?    @db.Date
+  createdAt          DateTime     @default(now())
+
+  template    CredentialTemplate @relation(fields: [templateId], references: [id])
+
+  @@map("credential_requirements")
+}
+
+// §5.3 secure evidence vault — storageKey private, signed URLs 30 s then 403, SHA-256 tampering
+// §5.3.2 upload quarantine PENDING→ClamAV→CLEAN/INFECTED, magic bytes check, 10 MB cap
+// §5.4 SCFHS mTLS nightly sync, circuit breaker, STALE 48 h eligible
+model EmployeeCredential {
+  id              String         @id @default(uuid()) @db.Uuid
+  employeeId      String         @db.Uuid
+  templateId      String         @db.Uuid
+  status          CredStatus     @default(PENDING)
+  issueDate       DateTime?      @db.Date
+  expiryDate      DateTime?      @db.Date
+  expiryHijri     String?        // YYYY-MM-DD Hijri
+  externalRef     String?        // SCFHS registration number (encrypted)
+  storageKey      String?        // vault object key — never exposed as direct URL
+  fileChecksum    String?        // SHA-256 of evidence file; mismatch = tampering alert
+  scanStatus      ScanStatus?
+  isOrphaned      Boolean        @default(false)
+  scfhsSyncStatus CredSyncStatus?
+  lastSyncAt      DateTime?
+  syncErrorCount  Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  employee        Employee           @relation(fields: [employeeId], references: [id])
+  template        CredentialTemplate @relation(fields: [templateId], references: [id])
+
+  @@index([employeeId, status])
+  @@index([expiryDate])
+  @@map("employee_credentials")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  ELIGIBILITY ENGINE  §6 V39 — canonical materialized state <50 ms
+// ══════════════════════════════════════════════════════════════════════
+
+enum EligStatus {
+  ELIGIBLE
+  ELIGIBLE_WITH_GRACE
+  INELIGIBLE
+}
+
+// One row per employee; refreshed daily 03:00 UTC and on publish re-validation
+model EmployeeEligibilityState {
+  employeeId       String    @id @db.Uuid
+  status           EligStatus @default(INELIGIBLE)
+  reasons          Json      @default("[]") // [{code, message, templateId?}]
+  lastCalculatedAt DateTime  @default(now())
+  updatedByEvent   String?
+  logicVersion     Int       @default(1)
+
+  employee         Employee  @relation(fields: [employeeId], references: [id])
+
+  @@index([status])
+  @@map("employee_eligibility_state")
+}
+
+// §6.1.2 emergency waivers — 72 h max DB-enforced, expiry auto-reverts to INELIGIBLE
+// CHECK (expiryDate <= createdAt + interval '72 hours') added via raw migration
+model EligibilityWaiver {
+  id          String   @id @default(uuid()) @db.Uuid
+  employeeId  String   @db.Uuid
+  templateId  String   @db.Uuid
+  waivedBy    String   @db.Uuid // actorId
+  reason      String
+  expiryDate  DateTime // max createdAt + 72 h — DB CHECK chk_waiver_max_window
+  createdAt   DateTime @default(now())
+
+  employee    Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("eligibility_waivers")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  NOTIFICATIONS  §7 — daily scan 06:00 AST, SMTP, push, bilingual
+// ══════════════════════════════════════════════════════════════════════
+
+enum NotifType {
+  CONTRACT
+  CREDENTIAL
+  COVERAGE
+  ELIGIBILITY
+  SCFHS
+  SYSTEM
+}
+
+enum NotifPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model Notification {
+  id           String         @id @default(uuid()) @db.Uuid
+  employeeId   String         @db.Uuid
+  type         NotifType
+  priority     NotifPriority  @default(MEDIUM)
+  title        String
+  message      String
+  titleAr      String?
+  messageAr    String?
+  eventKey     String?        @unique // deduplication — daily scan emits one per event
+  isRead       Boolean        @default(false)
+  smtpStatus   DeliveryStatus @default(PENDING)
+  smtpAttempts Int            @default(0)
+  smtpLastAt   DateTime?
+  pushStatus   DeliveryStatus @default(PENDING)
+  createdAt    DateTime       @default(now())
+
+  @@index([employeeId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model DeviceToken {
+  id           String   @id @default(uuid()) @db.Uuid
+  employeeId   String   @db.Uuid
+  token        String   @unique
+  provider     String   // fcm | hospital_gateway
+  isActive     Boolean  @default(true)
+  registeredAt DateTime @default(now())
+
+  @@map("device_tokens")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  SCHEDULING  §2.x — draft/publish guard, eligibility-gated publish
+// ══════════════════════════════════════════════════════════════════════
+
+enum ShiftType {
+  Morning
+  Evening
+  Night
+}
+
+enum ShiftStatus {
+  Draft
+  Published
+  Cancelled
+}
+
+model ShiftAssignment {
+  id          String      @id @default(uuid()) @db.Uuid
+  unitId      String      @db.Uuid
+  shiftType   ShiftType
+  shiftDate   DateTime    @db.Date
+  employeeId  String      @db.Uuid
+  status      ShiftStatus @default(Draft)
+  publishedBy String?     @db.Uuid
+  publishedAt DateTime?
+  createdAt   DateTime    @default(now())
+
+  @@unique([unitId, shiftType, shiftDate, employeeId])
+  @@index([shiftDate])
+  @@map("shift_assignments")
+}
+
+// Coverage gap alert dedup — same assignment+window fires once only (same tx as push send)
+model CoverageAlertLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  assignmentId String? @db.Uuid
+  windowStart DateTime
+  unitId      String   @db.Uuid
+  alertType   String
+  createdAt   DateTime @default(now())
+
+  @@unique([assignmentId, windowStart])
+  @@map("coverage_alert_logs")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  ATTENDANCE  §14.2 — timezone-safe, 15-min coverage-alert window
+// ══════════════════════════════════════════════════════════════════════
+
+enum AttendanceEventType {
+  CLOCK_IN
+  CLOCK_OUT
+  BREAK_START
+  BREAK_END
+}
+
+model AttendanceEvent {
+  id             String              @id @default(uuid()) @db.Uuid
+  employeeId     String              @db.Uuid
+  eventType      AttendanceEventType
+  eventTimestamp DateTime            // stored as timestamptz; Asia/Riyadh applied in queries
+  deviceId       String?
+  locationCode   String?
+
+  employee       Employee            @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, eventTimestamp])
+  @@map("attendance_events")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  BREAK-GLASS  §3.6 V44 — irrevocable siren, 4 h auto-revoke
+//  runtime cannot DELETE from this table
+// ══════════════════════════════════════════════════════════════════════
+
+model BreakGlassEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  actorId         String   @db.Uuid
+  accessTimestamp DateTime @default(now())
+  reason          String
+  ipAddress       String
+  eventType       String   @default("Siren_Activated")
+  resolvedAt      DateTime?
+
+  @@map("break_glass_events")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  PDPL — CRYPTO-SHREDDING  §8.3 V38
+//  Deleting a key makes PII fields unreadable; audit chain remains valid
+// ══════════════════════════════════════════════════════════════════════
+
+model UserEncryptionKey {
+  id               String    @id @default(uuid()) @db.Uuid
+  employeeId       String    @unique @db.Uuid
+  encryptedUserKey Bytes     // AES-256-GCM user key, encrypted by master key in KMS/HSM
+  keyVersion       Int       @default(1)
+  shreddedAt       DateTime? // set when employee exercises Right to Erasure
+  createdAt        DateTime  @default(now())
+
+  @@map("user_encryption_keys")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  WORKER LEASES  §10.3 V49 — heartbeat 1/3 interval, crash takeover
+// ══════════════════════════════════════════════════════════════════════
+
+// 7 jobs: daily_scan · smtp_queue · scfhs_sync · grace_expiry
+//         idempotency_cleanup · backup_freshness · quarantine_scan
+// Acquire: INSERT ON CONFLICT DO UPDATE WHERE holder_id=self OR expires_at<now()
+model WorkerLease {
+  jobName      String   @id
+  holderId     String   // UUID of worker instance
+  acquiredAt   DateTime @default(now())
+  heartbeatAt  DateTime @default(now())
+  expiresAt    DateTime
+  leaseSeconds Int      @default(300)
+
+  @@map("worker_leases")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  OBSERVABILITY  §10.8 — business health API, consistency auditor
+// ══════════════════════════════════════════════════════════════════════
+
+enum HealthStatus {
+  HEALTHY
+  WARNING
+  CRITICAL
+}
+
+model SystemHealthMetric {
+  metricName     String       @id
+  currentValue   String
+  status         HealthStatus @default(HEALTHY)
+  thresholdValue String?
+  alertMessage   String?
+  lastUpdated    DateTime     @updatedAt
+
+  @@map("system_health_metrics")
+}
+
+// Consistency auditor samples 1% workforce daily 03:00 — §10.8 B-13
+model ConsistencyAuditLog {
+  id             String     @id @default(uuid()) @db.Uuid
+  employeeId     String     @db.Uuid
+  expectedStatus EligStatus
+  actualStatus   EligStatus
+  driftDetected  Boolean
+  logicVersion   Int
+  resolvedAt     DateTime?
+  createdAt      DateTime   @default(now())
+
+  @@index([driftDetected])
+  @@map("consistency_audit_logs")
+}
+
+// Shadow mode — parallel execution for new eligibility logic before promotion §10.9
+model EligibilityShadowLog {
+  id              String     @id @default(uuid()) @db.Uuid
+  employeeId      String     @db.Uuid
+  activeStatus    EligStatus
+  candidateStatus EligStatus
+  discrepancy     Boolean
+  logicVersion    Int
+  createdAt       DateTime   @default(now())
+
+  @@index([discrepancy])
+  @@map("eligibility_shadow_logs")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  EXTERNAL API HEALTH / CIRCUIT BREAKER  §5.4 V40
+//  500 errors trip breaker 15 min; STALE keeps eligible 48 h
+// ══════════════════════════════════════════════════════════════════════
+
+model ExternalApiHealth {
+  apiName       String    @id
+  isAvailable   Boolean   @default(true)
+  failureCount  Int       @default(0)
+  lastFailureAt DateTime?
+  recoveryTime  DateTime?
+
+  @@map("external_api_health")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  FHIR  §14.1 — Practitioner + PractitionerRole split (HL7 R4 valid)
+// ══════════════════════════════════════════════════════════════════════
+
+model FhirResourceMapping {
+  internalId      String   @id // e.g. Employee:uuid
+  fhirResourceId  String   @unique // global UUID used in FHIR server
+  resourceType    String   // Practitioner | PractitionerRole
+  lastSyncedAt    DateTime @default(now())
+
+  @@map("fhir_resource_mappings")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  REQUEST AUDIT  §9.2 — X-Request-Id end-to-end tracing, PII redacted
+// ══════════════════════════════════════════════════════════════════════
+
+model RequestLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  requestId   String   @unique // X-Request-Id header
+  actorId     String?  @db.Uuid
+  method      String
+  path        String
+  statusCode  Int
+  durationMs  Int
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("request_logs")
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  MIGRATION BRIDGE  §10.10 V47 — staging schema, BLOCK/WARN severity
+//  commitValidatedData() refuses if any BLOCK rows remain unresolved
+// ══════════════════════════════════════════════════════════════════════
+
+enum MigrationSeverity {
+  WARN
+  BLOCK
+}
+
+model MigrationValidationError {
+  id           String            @id @default(uuid()) @db.Uuid
+  stagingTable String
+  rowId        Int
+  errorMessage String
+  severity     MigrationSeverity
+  resolved     Boolean           @default(false)
+  createdAt    DateTime          @default(now())
+
+  @@map("migration_validation_errors")
+}
+
+model MigrationAuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorRole   String   // nurseapp_migration_admin
+  action      String
+  targetTable String
+  rowCount    Int
+  statement   String?
+  executedAt  DateTime @default(now())
+
+  @@map("migration_audit_logs")
+}

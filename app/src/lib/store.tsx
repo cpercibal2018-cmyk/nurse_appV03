@@ -571,10 +571,14 @@ export const useStore = create<Store>()(
           // the recorded Hijri date cannot drift if the calendar tables change.
           startDateHijri: (emp as any).contractStartHijri || toHijriIso(emp.contractStart),
           endDateHijri: (emp as any).contractEndHijri || toHijriIso(emp.contractEnd),
-          status: 'Approved',
+          // Draft: does not provide coverage yet. Newly onboarded employees
+          // appear in Contracts → Create Contract until HR approves (or creates
+          // a covering period). Matches Create-dropdown filter (no Approved/Active).
+          status: 'Draft',
         };
 
-        // atomic transaction simulation — fn_onboard_employee_with_contract creates employee + approved contract + audit entry in one block
+        // atomic transaction simulation — employee + draft contract + audit in one block
+        // (coverage starts only after Approve/Active on the Contracts page)
         set((s) => ({
           employees: [...s.employees, newEmployee],
           contracts: [...s.contracts, newContract],

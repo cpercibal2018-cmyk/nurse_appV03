@@ -80,6 +80,20 @@ export default function ContractsPage() {
   // Only employees who already have a contract on record can be renewed — a
   // brand-new hire is onboarded via Workforce → Onboard Employee. This is what
   // separates the "old employee" flow from the "new employee" one.
+  // Create Contract (New Employee): only people who do NOT yet have
+  // Approved/Active coverage — newly onboarded hires (Draft/Pending or no
+  // covering contract). Employees with Approved/Active go through Renew.
+  const createContractEmployees = employees
+    .filter(e => {
+      if ((e as any).deletedAt) return false;
+      const hasCoverage = contracts.some(
+        c => c.employeeId === e.id && ['Approved', 'Active'].includes(c.status),
+      );
+      return !hasCoverage;
+    })
+    // Newest hires first so "just onboarded" are easy to find
+    .sort((a, b) => String((b as any).hireDate || '').localeCompare(String((a as any).hireDate || '')));
+
   const renewableEmployees = employees.filter(
     e => !(e as any).deletedAt && latestContractFor(contracts, e.id),
   );
@@ -476,8 +490,18 @@ export default function ContractsPage() {
         <Form form={form} layout="vertical">
           <Alert type="warning" showIcon style={{ marginBottom: 16 }} message="Contract-First + Job Number from Contract" description="HR Admin enters Job Number (from contract) + employee + dates. Job Number unique enforced by DB unique index. Exclusion constraint GiST prevents overlapping Approved/Active periods same employee. Start/end inclusive." />
 
-          <Form.Item name="employeeId" label="Employee (Job Number from Contract)" rules={[{ required: true }]} extra="Select existing employee — Job Number is from contract that was entered during onboarding, plain numbers or text+number combination allowed (e.g. 1001, AIGH1002), unique per employee. For new employee, use Workforce → Onboard Employee which creates employee + contract atomically via fn_onboard_employee_with_contract. Full Name auto = First + Middle + Last.">
-            <Select showSearch placeholder="Search by job number or name" onChange={onEmployeeChange} options={employees.filter(e => !(e as any).deletedAt).map(e => ({ label: `${e.jobNumber} — ${e.name} [${(e as any).firstName} ${(e as any).middleName || ''} ${(e as any).lastName}] [${e.position}] Unit ${e.unitId}`, value: e.id }))} filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())} />
+          <Form.Item name="employeeId" label="Employee (Job Number from Contract)" rules={[{ required: true }]} extra="Select existing employee — Job Number is from contract that was entered during onboarding, plain numbers or text+number combination allowed (e.g. 1001, AIGH1002), unique per employee. Only newly onboarded employees without an Approved/Active contract appear here (Draft/Pending or no covering period). Employees who already have coverage use Renew Contract. Onboard via Workforce first if the list is empty.">
+            <Select
+              showSearch
+              placeholder={createContractEmployees.length ? "Search newly onboarded / no covering contract" : "No eligible employees — onboard first or all already have Approved/Active"}
+              onChange={onEmployeeChange}
+              notFoundContent={createContractEmployees.length === 0 ? "No employees without Approved/Active contract. Use Renew for existing coverage, or Onboard a new hire." : undefined}
+              options={createContractEmployees.map(e => ({
+                label: `${e.jobNumber} — ${e.name} [${(e as any).firstName} ${(e as any).middleName || ''} ${(e as any).lastName}] [${e.position}]${(e as any).hireDate ? ` · hired ${(e as any).hireDate}` : ''}`,
+                value: e.id,
+              }))}
+              filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
+            />
           </Form.Item>
 
           {/* Contract Start / Contract End entered at Onboarding, carried into

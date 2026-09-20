@@ -624,13 +624,13 @@ export default function ContractsPage() {
             name="employeeId"
             label="Employee to renew"
             rules={[{ required: true, message: 'Select the employee whose contract is being renewed' }]}
-            extra="Only employees who already have a contract on record appear here."
+            extra="Only employees whose contract is Expired (or Suspended / Terminated / Superseded) — or whose coverage period has already ended — appear here."
           >
             <Select
               showSearch
-              placeholder="Search by job number or name"
+              placeholder="Search employees needing renewal"
               onChange={onRenewEmployeeChange}
-              notFoundContent="No employees with an existing contract"
+              notFoundContent="No employees currently need contract renewal"
               options={renewableEmployees.map(e => ({ label: `${e.jobNumber} — ${e.name} [${e.position}] Unit ${e.unitId}`, value: e.id }))}
               filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
             />

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, Form, Input, Button, Typography, Alert, Space, Divider, Tag, message } from 'antd';
-import { UserOutlined, LockOutlined, SafetyCertificateOutlined, GlobalOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, GlobalOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
 import { useNavigate } from 'react-router-dom';
 import { setLanguage } from '../../lib/i18n';
@@ -33,9 +33,8 @@ export default function LoginPage() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: 24 }}>
       <Card style={{ width: 480, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <SafetyCertificateOutlined style={{ fontSize: 48, color: '#1677ff' }} />
-          <Title level={3} style={{ marginTop: 12, marginBottom: 4 }}>AIGH Nursing Workforce</Title>
-          <Text type="secondary">Management System v2.8.7b — Node 20 / PG 15</Text>
+          <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 100, objectFit: 'contain' }} />
+          <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>Management System v2.8.7c — Node 20 / PG 15</Text>
         </div>
 
         <Alert

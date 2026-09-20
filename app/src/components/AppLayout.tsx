@@ -131,8 +131,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             zIndex: 10,
           }}
         >
-          <div style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'bold', fontSize: collapsed ? 16 : 14, padding: 8, textAlign: 'center' }}>
-            {collapsed ? 'AIGH' : 'AIGH Workforce'}
+          <div style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 12px' }}>
+            {collapsed
+              ? <img src="/logo.jpg" alt="AIGH" style={{ height: 36, width: 36, objectFit: 'cover', objectPosition: 'left', borderRadius: 4 }} />
+              : <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 44, objectFit: 'contain', maxWidth: '100%' }} />
+            }
           </div>
           <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
           <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: 12, color: 'rgba(255,255,255,0.65)', fontSize: 11, textAlign: 'center' }}>

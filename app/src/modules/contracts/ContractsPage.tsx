@@ -80,16 +80,19 @@ export default function ContractsPage() {
   // Only employees who already have a contract on record can be renewed — a
   // brand-new hire is onboarded via Workforce → Onboard Employee. This is what
   // separates the "old employee" flow from the "new employee" one.
-  // Create Contract (New Employee): only people who do NOT yet have
-  // Approved/Active coverage — newly onboarded hires (Draft/Pending or no
-  // covering contract). Employees with Approved/Active go through Renew.
+  // Create Contract (New Employee): only genuinely new people — a brand-new
+  // hire with no contract yet, or one freshly onboarded whose contract is still
+  // Draft / PendingApproval (no coverage, not a lapsed contract). Anyone whose
+  // latest contract is Approved/Active (current coverage) OR a renewal-intended
+  // status (Expired / Suspended / Terminated / Superseded) is an existing
+  // employee and belongs under Renew, not here.
+  const PRE_COVERAGE_STATUSES = ['Draft', 'PendingApproval'];
   const createContractEmployees = employees
     .filter(e => {
       if ((e as any).deletedAt) return false;
-      const hasCoverage = contracts.some(
-        c => c.employeeId === e.id && ['Approved', 'Active'].includes(c.status),
-      );
-      return !hasCoverage;
+      const latest = latestContractFor(contracts, e.id);
+      if (!latest) return true; // never had a contract → brand-new hire
+      return PRE_COVERAGE_STATUSES.includes(latest.status);
     })
     // Newest hires first so "just onboarded" are easy to find
     .sort((a, b) => String((b as any).hireDate || '').localeCompare(String((a as any).hireDate || '')));

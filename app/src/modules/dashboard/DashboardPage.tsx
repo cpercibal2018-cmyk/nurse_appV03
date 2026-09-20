@@ -8,8 +8,19 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../lib/store';
 import { useNavigate } from 'react-router-dom';
+import { computeKpiA, computeKpiB, rosterCountsByArea, BAND_COLORS, BAND_ORDER, type Band } from '../../lib/kpi';
 
 const { Title, Text } = Typography;
+
+function MiniBandMeter({ band }: { band: Band }) {
+  return (
+    <div style={{ display: 'flex', width: '100%', borderRadius: 4, overflow: 'hidden', height: 10, marginTop: 8 }}>
+      {BAND_ORDER.map(b => (
+        <div key={b} style={{ flex: 1, background: BAND_COLORS[b], opacity: b === band ? 1 : 0.25 }} />
+      ))}
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const { t } = useTranslation();
@@ -33,6 +44,19 @@ export default function DashboardPage() {
     });
     return { totalBeds, activeEmployees, eligible, grace, ineligible, byDept };
   }, [departments, units, employees, eligibilityStates]);
+
+  // Ada'a nursing KPIs — beds live from the unit directory, staffing from the
+  // same representative model the KPI page seeds (roster is sparse in the demo).
+  const kpi = useMemo(() => {
+    const beds = rosterCountsByArea(units as any, [], '', '');
+    const kpiA = computeKpiA({
+      ICU: { nurses: 70, beds: beds.ICU.beds },
+      ER: { nurses: 50, beds: beds.ER.beds },
+      OR: { nurses: 7, beds: beds.OR.beds },
+    });
+    const kpiB = computeKpiB(85, units.filter(u => u.isActive).reduce((s, u) => s + u.bedCount, 0));
+    return { kpiA, kpiB };
+  }, [units]);
 
   const recentAudit = auditEntries.slice(-5).reverse();
   const recentNotifications = notifications.slice(0, 5);
@@ -82,6 +106,41 @@ export default function DashboardPage() {
             <Space size={4} style={{ marginTop: 8 }}>
               <Tag color="blue">{shiftAssignments.filter(s => s.status === 'Published').length} Published</Tag>
               <Tag>{shiftAssignments.filter(s => s.status === 'Draft').length} Draft</Tag>
+            </Space>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* ── Ada'a Nursing KPIs — traffic-light summary ─────────────────────── */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} md={12}>
+          <Card hoverable onClick={() => navigate('/kpi')} styles={{ body: { padding: 16 } }}>
+            <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+              <Text strong>Nurse to Bed Ratio — Critical Areas</Text>
+              <Tag color={BAND_COLORS[kpi.kpiA.band]} style={{ color: '#fff', fontWeight: 600, border: 'none' }}>{kpi.kpiA.band}</Tag>
+            </Space>
+            <MiniBandMeter band={kpi.kpiA.band} />
+            <Space size={16} style={{ marginTop: 10 }}>
+              {kpi.kpiA.areas.map(a => (
+                <Space key={a.area} size={4}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{a.area}</Text>
+                  <Text strong style={{ fontSize: 12, color: BAND_COLORS[a.band] }}>{a.ratioLabel}</Text>
+                </Space>
+              ))}
+              <Text type="secondary" style={{ fontSize: 12 }}>· score {kpi.kpiA.averageCode.toFixed(2)}/4</Text>
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} md={12}>
+          <Card hoverable onClick={() => navigate('/kpi')} styles={{ body: { padding: 16 } }}>
+            <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+              <Text strong>Hospital Nurse to Bed Ratio <Tag>QFR-55</Tag></Text>
+              <Tag color={BAND_COLORS[kpi.kpiB.band]} style={{ color: '#fff', fontWeight: 600, border: 'none' }}>{kpi.kpiB.band}</Tag>
+            </Space>
+            <MiniBandMeter band={kpi.kpiB.band} />
+            <Space size={16} style={{ marginTop: 10 }}>
+              <Text strong style={{ fontSize: 18, color: BAND_COLORS[kpi.kpiB.band] }}>{kpi.kpiB.ratioLabel}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{kpi.kpiB.nurses} nurses · {kpi.kpiB.beds} beds · target 1:&lt;6</Text>
             </Space>
           </Card>
         </Col>

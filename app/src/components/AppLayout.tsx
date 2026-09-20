@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Badge, Button, Space, Typography, ConfigProvider, theme } from 'antd';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Layout, Menu, Avatar, Dropdown, Badge, Button, Space, Typography, ConfigProvider, theme, Tooltip } from 'antd';
 import {
   DashboardOutlined,
   TeamOutlined,
@@ -16,9 +16,10 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   HeartOutlined,
-  CloudServerOutlined,
-  ExperimentOutlined,
   FileProtectOutlined,
+  BulbOutlined,
+  MoonOutlined,
+  FundOutlined,
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -33,10 +34,12 @@ const NavLink = ({ to, children, ...rest }: any) => {
     '/workforce': () => import('../modules/workforce/WorkforceRoutes'),
     '/units': () => import('../modules/workforce/UnitCapacityGrid'),
     '/credentials': () => import('../modules/credentials/CredentialsModule'),
+    '/my-credentials': () => import('../modules/credentials/MyCredentialsPage'),
     '/eligibility': () => import('../modules/eligibility/EligibilityModule'),
     '/scheduling': () => import('../modules/scheduling/SchedulingModule'),
     '/notifications': () => import('../modules/notifications/NotificationsModule'),
     '/audit': () => import('../modules/audit/AuditModule'),
+    '/kpi': () => import('../modules/kpi/NursingKpiPage'),
     '/roles': () => import('../modules/admin/RoleMatrixPage'),
     '/contracts': () => import('../modules/contracts/ContractsPage'),
     '/admin': () => import('../modules/admin/AdminModule'),
@@ -56,11 +59,17 @@ const NavLink = ({ to, children, ...rest }: any) => {
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [isDark, setIsDark] = useState(() => localStorage.getItem('aigh-theme') === 'dark');
   const location = useLocation();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const { isAuthenticated, currentUser, logout, notifications } = useStore();
   const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    localStorage.setItem('aigh-theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
 
   const handleLogout = () => {
     logout();
@@ -82,11 +91,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { key: '/units', icon: <ApartmentOutlined />, label: <NavLink to="/units">{t('units')}</NavLink> },
     { key: '/positions', icon: <IdcardOutlined />, label: <NavLink to="/positions">{t('positions')}</NavLink> },
     { key: '/credentials', icon: <SafetyCertificateOutlined />, label: <NavLink to="/credentials">{t('credentials')}</NavLink> },
+    { key: '/my-credentials', icon: <IdcardOutlined />, label: <NavLink to="/my-credentials">My Credentials</NavLink> },
     { key: '/eligibility', icon: <CheckCircleOutlined />, label: <NavLink to="/eligibility">{t('eligibility')}</NavLink> },
     { key: '/scheduling', icon: <ScheduleOutlined />, label: <NavLink to="/scheduling">{t('scheduling')}</NavLink> },
     { key: '/notifications', icon: <BellOutlined />, label: <NavLink to="/notifications">{t('notifications')}</NavLink> },
     { key: '/audit', icon: <AuditOutlined />, label: <NavLink to="/audit">{t('audit')}</NavLink> },
     { key: '/observability', icon: <HeartOutlined />, label: <NavLink to="/observability">{t('observability')}</NavLink> },
+    { key: '/kpi', icon: <FundOutlined />, label: <NavLink to="/kpi">Nursing KPIs</NavLink> },
     { key: '/roles', icon: <SafetyCertificateOutlined />, label: <NavLink to="/roles">Roles & Matrix</NavLink> },
     { key: '/admin', icon: <SettingOutlined />, label: <NavLink to="/admin">{t('admin')}</NavLink> },
   ];
@@ -105,19 +116,38 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   const isRtl = i18n.language === 'ar';
 
+  const sidebarW = collapsed ? 64 : 244;
+
   return (
     <ConfigProvider
       theme={{
-        algorithm: theme.defaultAlgorithm,
-        token: { colorPrimary: '#1677ff' },
+        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: {
+          colorPrimary: '#1a6b4e',
+          colorLink: '#2563eb',
+          colorSuccess: '#16a34a',
+          colorWarning: '#d97706',
+          colorError: '#dc2626',
+          borderRadius: 8,
+          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        },
+        components: {
+          Layout: { siderBg: '#0f3024', triggerBg: '#0a2019' },
+          Menu: { darkItemBg: '#0f3024', darkSubMenuItemBg: '#0a2019', darkItemSelectedBg: '#1a6b4e', itemHeight: 42 },
+          Table: { headerBg: '#e8f5ef', headerColor: '#1e293b' },
+          Card: { paddingLG: 20 },
+          Button: { primaryShadow: 'none' },
+        },
       }}
       direction={isRtl ? 'rtl' : 'ltr'}
     >
-      <Layout style={{ minHeight: '100vh' }}>
+      <Layout style={{ minHeight: '100vh', background: 'var(--bg)' }}>
         <Sider
           trigger={null}
           collapsible
           collapsed={collapsed}
+          width={244}
+          collapsedWidth={64}
           breakpoint="lg"
           onBreakpoint={(broken) => setCollapsed(broken)}
           style={{
@@ -129,48 +159,83 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             top: 0,
             bottom: 0,
             zIndex: 10,
+            background: '#0f3024',
+            boxShadow: '2px 0 8px rgba(0,0,0,.18)',
           }}
         >
-          <div style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 12px' }}>
+          {/* Logo */}
+          <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
             {collapsed
-              ? <img src="/logo.jpg" alt="AIGH" style={{ height: 36, width: 36, objectFit: 'cover', objectPosition: 'left', borderRadius: 4 }} />
-              : <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 44, objectFit: 'contain', maxWidth: '100%' }} />
+              ? <img src="/logo.jpg" alt="AIGH" style={{ height: 34, width: 34, objectFit: 'cover', objectPosition: 'left', borderRadius: 4 }} />
+              : <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 40, objectFit: 'contain', maxWidth: '100%' }} />
             }
           </div>
-          <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems} />
-          <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: 12, color: 'rgba(255,255,255,0.65)', fontSize: 11, textAlign: 'center' }}>
-            {!collapsed && (
-              <>
-                <div>v2.8.7b • Node 20 / PG 15</div>
-                <div style={{ marginTop: 4, display: 'flex', gap: 4, justifyContent: 'center' }}>
-                  <FileProtectOutlined /> PDPL • KSA
+
+          <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]} items={menuItems}
+            style={{ background: '#0f3024', border: 'none', marginTop: 8 }}
+          />
+
+          {/* Footer badge */}
+          <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,.08)', background: '#0a2019' }}>
+            {collapsed
+              ? <Tooltip title="PDPL · KSA" placement="right"><FileProtectOutlined style={{ color: 'rgba(255,255,255,.45)', fontSize: 14, display: 'block', textAlign: 'center' }} /></Tooltip>
+              : <div style={{ color: 'rgba(255,255,255,.45)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
+                  <div>v2.8.7c · Node 20 / PG 15</div>
+                  <div style={{ marginTop: 2 }}><FileProtectOutlined /> PDPL · KSA me-central-1</div>
                 </div>
-              </>
-            )}
+            }
           </div>
         </Sider>
-        <Layout style={{ marginLeft: isRtl ? 0 : collapsed ? 80 : 200, marginRight: isRtl ? (collapsed ? 80 : 200) : 0, transition: 'all 0.2s' }}>
-          <Header style={{ padding: `0 ${isRtl ? '24px 0 24px 24px' : '0 24px'}`, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0', position: 'sticky', top: 0, zIndex: 9 }}>
+
+        <Layout style={{ marginLeft: isRtl ? 0 : sidebarW, marginRight: isRtl ? sidebarW : 0 }}>
+          <Header style={{
+            padding: '0 20px',
+            background: isDark ? '#161b22' : '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: `1px solid ${isDark ? '#30363d' : '#e2e8f0'}`,
+            position: 'sticky',
+            top: 0,
+            zIndex: 9,
+            height: 60,
+            lineHeight: '60px',
+            boxShadow: '0 1px 3px rgba(0,0,0,.06)',
+          }}>
             <Space>
-              <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} />
-              <Text strong style={{ fontSize: 16 }}>{t('appName')}</Text>
+              <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)}
+                style={{ color: isDark ? '#e6edf3' : '#1e293b' }}
+              />
+              <Text strong style={{ fontSize: 15, color: isDark ? '#e6edf3' : '#1e293b' }}>{t('appName')}</Text>
             </Space>
-            <Space size="middle">
-              <Button type="text" icon={<GlobalOutlined />} onClick={() => handleLanguageChange(i18n.language === 'en' ? 'ar' : 'en')}>
-                {i18n.language === 'en' ? 'العربية' : 'English'}
+            <Space size={4}>
+              <Tooltip title={isDark ? 'Light mode' : 'Dark mode'}>
+                <Button type="text" icon={isDark ? <BulbOutlined /> : <MoonOutlined />} onClick={() => setIsDark(d => !d)}
+                  style={{ color: isDark ? '#e6edf3' : '#64748b' }}
+                />
+              </Tooltip>
+              <Button type="text" icon={<GlobalOutlined />} onClick={() => handleLanguageChange(i18n.language === 'en' ? 'ar' : 'en')}
+                style={{ color: isDark ? '#e6edf3' : '#64748b', fontWeight: 500 }}
+              >
+                {i18n.language === 'en' ? 'ع' : 'EN'}
               </Button>
-              <Badge count={unreadCount} size="small">
-                <Button type="text" icon={<BellOutlined />} onClick={() => navigate('/notifications')} />
+              <Badge count={unreadCount} size="small" style={{ backgroundColor: '#1a6b4e' }}>
+                <Button type="text" icon={<BellOutlined />} onClick={() => navigate('/notifications')}
+                  style={{ color: isDark ? '#e6edf3' : '#64748b' }}
+                />
               </Badge>
               <Dropdown menu={userMenu} placement="bottomRight">
-                <Space style={{ cursor: 'pointer' }}>
-                  <Avatar style={{ backgroundColor: '#1677ff' }}>{currentUser?.name?.[0]?.toUpperCase()}</Avatar>
-                  {!collapsed && <Text>{currentUser?.name}</Text>}
+                <Space style={{ cursor: 'pointer', marginLeft: 4 }}>
+                  <Avatar style={{ backgroundColor: '#1a6b4e', fontSize: 13, fontWeight: 600 }}>
+                    {currentUser?.name?.[0]?.toUpperCase()}
+                  </Avatar>
+                  {!collapsed && <Text style={{ color: isDark ? '#e6edf3' : '#1e293b', fontSize: 13, fontWeight: 500 }}>{currentUser?.name}</Text>}
                 </Space>
               </Dropdown>
             </Space>
           </Header>
-          <Content style={{ margin: 24, background: '#f5f5f5', minHeight: 280 }}>
+
+          <Content style={{ margin: 20, minHeight: 280 }}>
             {children}
           </Content>
         </Layout>

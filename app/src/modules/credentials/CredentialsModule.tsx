@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Card, Table, Tag, Button, Space, Tabs, Modal, Form, Input, Select, Switch, InputNumber, message, Typography, Alert, Badge, Descriptions, List } from 'antd';
-import { PlusOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { useStore } from '../../lib/store';
+import { Card, Table, Tag, Button, Space, Tabs, Modal, Form, Input, Select, Switch, InputNumber, message, Typography, Alert, Badge, Descriptions, List, Upload, Tooltip } from 'antd';
+import { PlusOutlined, SafetyCertificateOutlined, FilePdfOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useStore, getCredentialEvidenceBytes } from '../../lib/store';
+import { checkContractCopyCandidate, CONTRACT_COPY_ACCEPT as PDF_ACCEPT, PDF_MAGIC } from '../../lib/contracts';
 
 const { Title, Text } = Typography;
 
@@ -10,14 +11,25 @@ export default function CredentialsModule() {
     credentialCategories, credentialTemplates, credentialRequirements, credentials,
     employees, units, positions,
     addCredentialRequirement, updateCredentialRequirement, deleteCredentialRequirement,
-    addCredential, updateCredential, currentUser
+    addCredential, updateCredential, attachCredentialEvidence, currentUser
   } = useStore();
 
   const [activeTab, setActiveTab] = useState('templates');
   const [isReqModal, setIsReqModal] = useState(false);
   const [isCredModal, setIsCredModal] = useState(false);
+  const [credFile, setCredFile] = useState<File | null>(null);
   const [form] = Form.useForm();
   const [credForm] = Form.useForm();
+
+  const downloadEvidence = (ev: any) => {
+    try {
+      const bytes = getCredentialEvidenceBytes(ev.id, ev.scanStatus);
+      const url = URL.createObjectURL(new Blob([bytes as any], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = ev.fileName; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) { message.error(e.message); }
+  };
 
   const handleAddRequirement = async () => {
     try {
@@ -34,19 +46,23 @@ export default function CredentialsModule() {
   const handleAddCredential = async () => {
     try {
       const values = await credForm.validateFields();
-      addCredential({
+      if (!credFile) { message.error('Attach the credential PDF before saving'); return; }
+      const newId = addCredential({
         employeeId: values.employeeId,
         templateId: values.templateId,
-        validityStatus: 'Valid',
+        validityStatus: 'PendingVerification',
         issueDate: values.issueDate,
         expiryDate: values.expiryDate,
         trackingData: { note: values.note },
-        syncStatus: 'SYNCED',
+        syncStatus: 'PENDING',
         lastSyncAttempt: new Date().toISOString(),
       } as any);
-      message.success('Credential added — evidence enters quarantine pipeline (PENDING → CLEAN via ClamAV)');
+      const bytes = new Uint8Array(await credFile.arrayBuffer());
+      const ev = attachCredentialEvidence({ credentialId: newId, file: { name: credFile.name, type: credFile.type, bytes } });
+      message.success(`Credential added — evidence v${ev.version} attached (${(ev.sizeBytes / 1024).toFixed(0)} KB, scan ${ev.scanStatus})`);
       setIsCredModal(false);
       credForm.resetFields();
+      setCredFile(null);
     } catch (e: any) {
       message.error(e.message);
     }
@@ -80,6 +96,24 @@ export default function CredentialsModule() {
     { title: 'Issue', dataIndex: 'issueDate', key: 'issueDate', width: 110 },
     { title: 'Expiry', dataIndex: 'expiryDate', key: 'expiryDate', width: 110 },
     { title: 'SCFHS Sync', dataIndex: 'syncStatus', key: 'syncStatus', width: 100, render: (s: string) => <Tag color={s === 'SYNCED' ? 'green' : s === 'STALE' ? 'orange' : 'red'}>{s || 'UNKNOWN'}</Tag> },
+    {
+      title: 'Evidence (PDF)', key: 'evidence', width: 180,
+      render: (_: any, r: any) => {
+        const list = r.evidence ?? [];
+        if (list.length === 0) return <Tag>none</Tag>;
+        const latest = list[list.length - 1];
+        return (
+          <Space size={4}>
+            <FilePdfOutlined style={{ color: '#c00' }} />
+            <Text style={{ fontSize: 11 }} ellipsis>v{latest.version}</Text>
+            <Tag color={latest.scanStatus === 'CLEAN' ? 'green' : latest.scanStatus === 'PENDING' ? 'orange' : 'red'}>{latest.scanStatus}</Tag>
+            <Tooltip title={latest.scanStatus === 'CLEAN' ? 'Download evidence' : 'Not downloadable until scan is CLEAN (§5.3.2)'}>
+              <Button size="small" icon={<DownloadOutlined />} disabled={latest.scanStatus !== 'CLEAN'} onClick={() => downloadEvidence(latest)} />
+            </Tooltip>
+          </Space>
+        );
+      }
+    },
     { title: 'Verified', key: 'verified', render: (_: any, r: any) => r.verifiedAt ? new Date(r.verifiedAt).toLocaleDateString() : '-' },
   ];
 
@@ -177,9 +211,9 @@ export default function CredentialsModule() {
         </Form>
       </Modal>
 
-      <Modal title="Add Employee Credential — Quarantine Pipeline" open={isCredModal} onCancel={() => setIsCredModal(false)} onOk={handleAddCredential} width={600} destroyOnClose>
+      <Modal title="Add Employee Credential — Quarantine Pipeline" open={isCredModal} onCancel={() => { setIsCredModal(false); setCredFile(null); }} onOk={handleAddCredential} okText="Save Credential" width={600} destroyOnClose>
         <Form form={credForm} layout="vertical">
-          <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="Upload Rules" description="Accepted: PDF, JPEG, PNG, WebP. Max 10MB. Magic bytes verification. Each upload creates versioned evidence with scan status. Previous approved remains accessible while replacement pending. Quarantine: PENDING → ClamAV scan → CLEAN/INFECTED. Only CLEAN downloadable. Infected deleted. EICAR test detected." />
+          <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="Upload Rules" description="Accepted: PDF only. Max 10MB. Magic-byte verified (%PDF-). Each upload creates versioned evidence with scan status. Quarantine: PENDING → ClamAV scan → CLEAN/INFECTED. Only CLEAN downloadable." />
           <Form.Item name="employeeId" label="Employee" rules={[{ required: true }]}><Select options={employees.filter(e => !(e as any).deletedAt).map(e => ({ label: `${e.name} (${e.jobNumber})`, value: e.id }))} showSearch /></Form.Item>
           <Form.Item name="templateId" label="Credential Template" rules={[{ required: true }]}><Select options={credentialTemplates.filter(t => t.isActive).map(t => ({ label: `${t.code} - ${t.name}`, value: t.id }))} showSearch /></Form.Item>
           <Space>
@@ -187,6 +221,28 @@ export default function CredentialsModule() {
             <Form.Item name="expiryDate" label="Expiry Date" rules={[{ required: true }]}><Input type="date" /></Form.Item>
           </Space>
           <Form.Item name="note" label="Tracking Data / Note"><Input.TextArea placeholder="Passport number, license number, etc." /></Form.Item>
+          <Form.Item label="Credential Document [PDF] — required" required>
+            <Upload.Dragger
+              accept={PDF_ACCEPT} maxCount={1} showUploadList={{ showRemoveIcon: true }}
+              beforeUpload={async (file) => {
+                const quick = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size });
+                if (!quick.ok) { message.error(quick.message); return Upload.LIST_IGNORE; }
+                let head: Uint8Array;
+                try { head = new Uint8Array(await file.slice(0, PDF_MAGIC.length).arrayBuffer()); }
+                catch { message.error('Could not read file'); return Upload.LIST_IGNORE; }
+                const verified = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size, head });
+                if (!verified.ok) { message.error(verified.message); return Upload.LIST_IGNORE; }
+                setCredFile(file as any);
+                return false;
+              }}
+              onRemove={() => { setCredFile(null); return true; }}
+              style={{ borderColor: credFile ? '#52c41a' : undefined }}
+            >
+              <p className="ant-upload-drag-icon"><FilePdfOutlined style={{ fontSize: 32, color: '#c00' }} /></p>
+              <p className="ant-upload-text">Click or drag a PDF here</p>
+              <p className="ant-upload-hint">*.pdf only · max 10 MB · content verified against %PDF-</p>
+            </Upload.Dragger>
+          </Form.Item>
         </Form>
       </Modal>
     </div>

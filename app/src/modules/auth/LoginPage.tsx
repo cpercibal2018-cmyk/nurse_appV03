@@ -30,11 +30,11 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: 24 }}>
-      <Card style={{ width: 480, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #0f3024 0%, #1a6b4e 60%, #134e38 100%)', padding: 24 }}>
+      <Card style={{ width: 480, boxShadow: '0 16px 48px rgba(0,0,0,0.32)', border: 'none', borderRadius: 12 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 100, objectFit: 'contain' }} />
-          <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>Management System v2.8.7c — Node 20 / PG 15</Text>
+          <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 96, objectFit: 'contain' }} />
+          <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>Management System v2.8.7c — Node 20 / PG 15</Text>
         </div>
 
         <Alert
@@ -52,7 +52,7 @@ export default function LoginPage() {
           <Form.Item name="password" label="Password (12-72 chars, bcrypt)" rules={[{ required: true }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="Password" />
           </Form.Item>
-          <Button type="primary" htmlType="submit" block loading={loading}>Login — JWT + Refresh Rotation + Replay Detection</Button>
+          <Button type="primary" htmlType="submit" block loading={loading} size="large" style={{ background: '#1a6b4e', borderColor: '#1a6b4e', fontWeight: 600 }}>Sign In</Button>
         </Form>
 
         <Divider>Demo Accounts (any password works)</Divider>

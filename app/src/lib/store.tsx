@@ -77,6 +77,16 @@ export const getContractCopyBytes = (attachmentId: string, scanStatus: string): 
   return bytes;
 };
 
+// Credential evidence bytes — same session-vault pattern as contracts above.
+const credentialEvidenceBytes = new Map<string, Uint8Array>();
+
+export const getCredentialEvidenceBytes = (evidenceId: string, scanStatus: string): Uint8Array => {
+  if (scanStatus !== 'CLEAN') throw new Error(`SCAN_NOT_CLEAN: evidence ${evidenceId} is ${scanStatus} — an unscanned or infected file is never downloadable (§5.3.2)`);
+  const bytes = credentialEvidenceBytes.get(evidenceId);
+  if (!bytes) throw new Error(`EVIDENCE_BYTES_UNAVAILABLE: ${evidenceId} — bytes live in the session vault and are not persisted across reloads`);
+  return bytes;
+};
+
 export type Credential = {
   id: number;
   employeeId: number;
@@ -89,6 +99,20 @@ export type Credential = {
   verifiedAt?: string;
   syncStatus?: 'SYNCED' | 'STALE' | 'FAILED' | 'PENDING' | 'UNKNOWN';
   lastSyncAttempt?: string;
+  /** §5.3.1 — versioned evidence files; historical bytes never overwritten. */
+  evidence?: CredentialEvidence[];
+};
+
+export type CredentialEvidence = {
+  id: string;
+  version: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  uploadedBy: number | null;
+  scanStatus: 'PENDING' | 'CLEAN' | 'INFECTED';
+  storageKey: string;
 };
 
 export type AuditEntry = {
@@ -203,8 +227,10 @@ type Store = {
 
   // credentials
   credentials: Credential[];
-  addCredential: (cred: Omit<Credential, 'id'>) => void;
+  addCredential: (cred: Omit<Credential, 'id'>) => number;
   updateCredential: (id: number, data: Partial<Credential>) => void;
+  /** HR_ADMIN / SYSTEM_ADMIN for any credential, or an EMPLOYEE for their own. */
+  attachCredentialEvidence: (args: { credentialId: number; file: AttachmentPayload }) => CredentialEvidence;
 
   credentialCategories: typeof CREDENTIAL_CATEGORIES;
   credentialTemplates: typeof CREDENTIAL_TEMPLATES;
@@ -224,7 +250,8 @@ type Store = {
 
   // scheduling
   shiftAssignments: ShiftAssignment[];
-  addShiftAssignment: (a: Omit<ShiftAssignment, 'id'>) => void;
+  addShiftAssignment: (a: Omit<ShiftAssignment, 'id'>) => number;
+  removeShiftAssignment: (id: number) => void;
   publishAssignments: (ids: number[]) => { success: number; failed: { id: number; reason: string }[] };
 
   // eligibility
@@ -728,12 +755,70 @@ export const useStore = create<Store>()(
         { id: 2, employeeId: 1, templateId: 12, validityStatus: 'Valid', issueDate: '2024-01-01', expiryDate: '2026-01-01', trackingData: {}, syncStatus: 'SYNCED' },
         { id: 3, employeeId: 2, templateId: 5, validityStatus: 'ExpiringSoon', issueDate: '2023-01-01', expiryDate: '2025-10-15', trackingData: {}, syncStatus: 'STALE' },
       ] as Credential[],
-      addCredential: (cred) => set((s) => ({
-        credentials: [...s.credentials, { ...cred, id: Math.max(0, ...s.credentials.map(c => c.id)) + 1 }]
-      })),
+      addCredential: (cred) => {
+        const id = Math.max(0, ...get().credentials.map(c => c.id)) + 1;
+        set((s) => ({ credentials: [...s.credentials, { ...cred, id }] }));
+        return id;
+      },
       updateCredential: (id, data) => set((s) => ({
         credentials: s.credentials.map(c => c.id === id ? { ...c, ...data } : c)
       })),
+
+      /**
+       * Attach PDF evidence to a credential.
+       *
+       * §5.3.1 versioned — historical bytes never overwritten (always append).
+       * §5.3.2 the content type is verified against the PDF magic bytes before
+       * the row is marked CLEAN; the real pipeline leaves it PENDING until the
+       * ClamAV quarantine scan finishes.
+       *
+       * Scope: HR_ADMIN / SYSTEM_ADMIN may attach to any credential; an EMPLOYEE
+       * may attach only to their own credential (self-service upload).
+       */
+      attachCredentialEvidence: ({ credentialId, file }) => {
+        const state = get();
+        const cred = state.credentials.find(c => c.id === credentialId);
+        if (!cred) throw new Error(`CREDENTIAL_NOT_FOUND: ${credentialId}`);
+
+        const role = state.currentUser?.role;
+        const isAdmin = role === 'HR_ADMIN' || role === 'SYSTEM_ADMIN';
+        const isOwner = role === 'EMPLOYEE' && cred.employeeId === state.currentUser?.id;
+        if (!isAdmin && !isOwner) {
+          throw new Error(`FORBIDDEN: uploading credential evidence requires HR_ADMIN/SYSTEM_ADMIN, or the owning employee — current role is ${role ?? 'none (not signed in)'}`);
+        }
+
+        const verdict = checkContractCopyCandidate({ name: file.name, type: file.type, head: file.bytes });
+        if (!verdict.ok) throw new Error(`${verdict.code}: ${verdict.message}`);
+
+        const previous = cred.evidence ?? [];
+        const version = previous.length + 1;
+        const id = `cred_${credentialId}_v${version}`;
+        const evidence: CredentialEvidence = {
+          id, version,
+          fileName: file.name,
+          mimeType: 'application/pdf',
+          sizeBytes: file.bytes.length,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: state.currentUser?.id ?? null,
+          scanStatus: 'CLEAN',
+          storageKey: `vault/credentials/${credentialId}/v${version}/${file.name}`,
+        };
+
+        credentialEvidenceBytes.set(id, file.bytes);
+        set((s) => ({
+          credentials: s.credentials.map(c => c.id === credentialId
+            ? { ...c, evidence: [...(c.evidence ?? []), evidence], validityStatus: c.validityStatus === 'Valid' ? c.validityStatus : 'PendingVerification' }
+            : c),
+        }));
+        get().addAuditEntry({
+          actorId: state.currentUser?.id ?? null,
+          action: 'CREDENTIAL_EVIDENCE_ATTACHED',
+          resource: 'credentials',
+          resourceId: String(credentialId),
+          changes: { evidenceId: id, version, fileName: file.name, sizeBytes: file.bytes.length, scanStatus: 'CLEAN', storageKey: evidence.storageKey },
+        });
+        return evidence;
+      },
 
       credentialCategories: CREDENTIAL_CATEGORIES,
       credentialTemplates: CREDENTIAL_TEMPLATES,
@@ -780,8 +865,13 @@ export const useStore = create<Store>()(
         { id: 1, employeeId: 1, unitId: 13, shiftDate: new Date().toISOString().split('T')[0], shiftName: 'Morning', startTime: '07:00', endTime: '15:00', status: 'Published' },
         { id: 2, employeeId: 3, unitId: 15, shiftDate: new Date().toISOString().split('T')[0], shiftName: 'Evening', startTime: '15:00', endTime: '23:00', status: 'Draft' },
       ] as ShiftAssignment[],
-      addShiftAssignment: (a) => set((s) => ({
-        shiftAssignments: [...s.shiftAssignments, { ...a, id: Math.max(0, ...s.shiftAssignments.map(x => x.id)) + 1 }]
+      addShiftAssignment: (a) => {
+        const id = Math.max(0, ...get().shiftAssignments.map(x => x.id)) + 1;
+        set((s) => ({ shiftAssignments: [...s.shiftAssignments, { ...a, id }] }));
+        return id;
+      },
+      removeShiftAssignment: (id) => set((s) => ({
+        shiftAssignments: s.shiftAssignments.filter(x => x.id !== id)
       })),
       publishAssignments: (ids) => {
         const state = get();

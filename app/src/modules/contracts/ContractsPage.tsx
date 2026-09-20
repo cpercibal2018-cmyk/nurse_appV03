@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, DatePicker, Alert, Typography, Descriptions, Row, Col, message, Tooltip, Upload } from 'antd';
-import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons';
+import { FileTextOutlined, PlusOutlined, SearchOutlined, AuditOutlined, UploadOutlined, DownloadOutlined, FilePdfOutlined, InboxOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { useStore, getContractCopyBytes, MAX_CONTRACT_COPY_BYTES } from '../../lib/store';
 import dayjs from 'dayjs';
 import { toHijri, toHijriShort } from '../../lib/hijri';
@@ -14,6 +14,8 @@ export default function ContractsPage() {
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingContract, setEditingContract] = useState<any>(null);
+  const [attachModal, setAttachModal] = useState<{ open: boolean; contractId: number | null }>({ open: false, contractId: null });
+  const [attachFile, setAttachFile] = useState<File | null>(null);
   const [form] = Form.useForm();
 
   // Live Gregorian → Hijri (Umm al-Qura) conversion for the contract date pickers
@@ -219,7 +221,7 @@ export default function ContractsPage() {
       }
     },
     {
-      title: 'Actions', key: 'actions', width: 250,
+      title: 'Actions', key: 'actions', width: 280,
       render: (_: any, r: any) => (
         <Space wrap>
           <Select size="small" value={r.status} style={{ width: 140 }} onChange={(v) => handleStatusChange(r.id, v)} options={[
@@ -232,6 +234,11 @@ export default function ContractsPage() {
             { label: 'Terminated', value: 'Terminated' },
             { label: 'Superseded', value: 'Superseded' },
           ]} />
+          <Tooltip title="Attach or replace signed contract PDF">
+            <Button size="small" icon={<PaperClipOutlined />} onClick={() => { setAttachFile(null); setAttachModal({ open: true, contractId: r.id }); }}>
+              Attach PDF
+            </Button>
+          </Tooltip>
           <Tooltip title="Full contract history and attachments — HR_ADMIN scoped">
             <Button size="small" icon={<AuditOutlined />}>History</Button>
           </Tooltip>
@@ -309,6 +316,54 @@ export default function ContractsPage() {
         <Table rowKey="id" dataSource={filtered} columns={columns as any} pagination={{ pageSize: 10, showSizeChanger: true }} size="small" scroll={{ x: 1300 }} />
       </Card>
 
+      {/* ── Attach PDF to existing contract ───────────────────────────────── */}
+      <Modal
+        title={<Space><FilePdfOutlined style={{ color: '#c00' }} />Attach Contract PDF — Contract #{attachModal.contractId}</Space>}
+        open={attachModal.open}
+        onCancel={() => { setAttachModal({ open: false, contractId: null }); setAttachFile(null); }}
+        onOk={async () => {
+          if (!attachFile) { message.error('Select a PDF file first'); return; }
+          const contract = contracts.find(c => c.id === attachModal.contractId);
+          if (!contract) return;
+          const bytes = new Uint8Array(await attachFile.arrayBuffer());
+          const attachment = attachContractCopy({ contractId: contract.id, file: { name: attachFile.name, type: attachFile.type, bytes } });
+          message.success(`PDF attached to Contract #${contract.id} — v${attachment.version} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB · scan ${attachment.scanStatus}`);
+          setAttachModal({ open: false, contractId: null });
+          setAttachFile(null);
+        }}
+        okText={<><PaperClipOutlined /> Attach PDF</>}
+        okButtonProps={{ disabled: !attachFile }}
+        width={520}
+        destroyOnClose
+      >
+        <Alert type="info" showIcon style={{ marginBottom: 16 }}
+          message="PDF files only · max 10 MB · magic-byte verified"
+          description="The file must start with %PDF- bytes. Only .pdf files are accepted regardless of declared MIME type. Each attach creates a new version — previous copies are retained (§5.3.1)."
+        />
+        <Upload.Dragger
+          accept={CONTRACT_COPY_ACCEPT}
+          maxCount={1}
+          showUploadList={{ showRemoveIcon: true }}
+          beforeUpload={async (file) => {
+            const quick = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size });
+            if (!quick.ok) { message.error(quick.message); return Upload.LIST_IGNORE; }
+            let head: Uint8Array;
+            try { head = new Uint8Array(await file.slice(0, PDF_MAGIC.length).arrayBuffer()); }
+            catch { message.error('Could not read file — try again'); return Upload.LIST_IGNORE; }
+            const verified = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size, head });
+            if (!verified.ok) { message.error(verified.message); return Upload.LIST_IGNORE; }
+            setAttachFile(file as any);
+            return false;
+          }}
+          onRemove={() => { setAttachFile(null); return true; }}
+          style={{ borderColor: attachFile ? '#52c41a' : undefined }}
+        >
+          <p className="ant-upload-drag-icon"><FilePdfOutlined style={{ fontSize: 40, color: '#c00' }} /></p>
+          <p className="ant-upload-text">Click or drag the signed contract PDF here</p>
+          <p className="ant-upload-hint">*.pdf only · max 10 MB</p>
+        </Upload.Dragger>
+      </Modal>
+
       <Modal
         title="Create Contract — HR Admin Enters Contract Data (Job Number from Contract)"
         open={isModalOpen}
@@ -380,35 +435,30 @@ export default function ContractsPage() {
           <Form.Item
             label="Contract Copy [PDF] — required"
             required
-            extra="PDF only, max 10 MB. Content type is verified against the %PDF- magic bytes, not just the declared type (§5.3.2); each upload is a new version and historical bytes are never overwritten (§5.3.1); attachments are HR Admin scoped (§4.2)."
+            extra="PDF only · max 10 MB · magic-byte verified (§5.3.2) · each upload creates a new version, historical bytes never overwritten (§5.3.1) · HR Admin scoped (§4.2)"
           >
-            <Upload
+            <Upload.Dragger
               accept={CONTRACT_COPY_ACCEPT}
               maxCount={1}
+              showUploadList={{ showRemoveIcon: true }}
               beforeUpload={async (file) => {
-                // `accept` is only a hint: every browser lets the user switch the
-                // dialog to "All files". So the picker checks the content too,
-                // and refuses here rather than after HR has filled the form in.
                 const quick = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size });
                 if (!quick.ok) { message.error(quick.message); return Upload.LIST_IGNORE; }
-
                 let head: Uint8Array;
-                try {
-                  head = new Uint8Array(await file.slice(0, PDF_MAGIC.length).arrayBuffer());
-                } catch {
-                  message.error('The contract copy could not be read — try again');
-                  return Upload.LIST_IGNORE;
-                }
+                try { head = new Uint8Array(await file.slice(0, PDF_MAGIC.length).arrayBuffer()); }
+                catch { message.error('The contract copy could not be read — try again'); return Upload.LIST_IGNORE; }
                 const verified = checkContractCopyCandidate({ name: file.name, type: file.type, size: file.size, head });
                 if (!verified.ok) { message.error(verified.message); return Upload.LIST_IGNORE; }
-
                 setContractCopy(file as any);
-                return false; // never auto-POST — the bytes go to the store, which re-verifies
+                return false;
               }}
               onRemove={() => { setContractCopy(null); return true; }}
+              style={{ borderColor: contractCopy ? '#52c41a' : undefined }}
             >
-              <Button icon={<UploadOutlined />}>Attach Contract Copy (PDF)</Button>
-            </Upload>
+              <p className="ant-upload-drag-icon"><FilePdfOutlined style={{ fontSize: 32, color: '#c00' }} /></p>
+              <p className="ant-upload-text">Click or drag a PDF here to attach</p>
+              <p className="ant-upload-hint">PDF files only (.pdf) · max 10 MB · content verified against %PDF- magic bytes</p>
+            </Upload.Dragger>
           </Form.Item>
 
           <Descriptions bordered size="small" column={1} style={{ marginTop: 16 }}>

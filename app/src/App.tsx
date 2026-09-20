@@ -10,6 +10,7 @@ const UnitCapacityGrid = lazy(() => import('./modules/workforce/UnitCapacityGrid
 const DepartmentsPage = lazy(() => import('./modules/workforce/DepartmentsPage'));
 const PositionsPage = lazy(() => import('./modules/workforce/PositionsPage'));
 const CredentialsModule = lazy(() => import('./modules/credentials/CredentialsModule'));
+const MyCredentialsPage = lazy(() => import('./modules/credentials/MyCredentialsPage'));
 const EligibilityModule = lazy(() => import('./modules/eligibility/EligibilityModule'));
 const SchedulingModule = lazy(() => import('./modules/scheduling/SchedulingModule'));
 const NotificationsModule = lazy(() => import('./modules/notifications/NotificationsModule'));
@@ -18,6 +19,7 @@ const ObservabilityPage = lazy(() => import('./modules/observability/Observabili
 const AdminModule = lazy(() => import('./modules/admin/AdminModule'));
 const RoleMatrixPage = lazy(() => import('./modules/admin/RoleMatrixPage'));
 const ContractsPage = lazy(() => import('./modules/contracts/ContractsPage'));
+const NursingKpiPage = lazy(() => import('./modules/kpi/NursingKpiPage'));
 const LoginPage = lazy(() => import('./modules/auth/LoginPage'));
 
 function lazyRoute(Component: React.LazyExoticComponent<any>) {
@@ -47,11 +49,13 @@ export default function App() {
         <Route path="/departments" element={<ProtectedRoute>{lazyRoute(DepartmentsPage)}</ProtectedRoute>} />
         <Route path="/positions" element={<ProtectedRoute>{lazyRoute(PositionsPage)}</ProtectedRoute>} />
         <Route path="/credentials" element={<ProtectedRoute>{lazyRoute(CredentialsModule)}</ProtectedRoute>} />
+        <Route path="/my-credentials" element={<ProtectedRoute>{lazyRoute(MyCredentialsPage)}</ProtectedRoute>} />
         <Route path="/eligibility" element={<ProtectedRoute>{lazyRoute(EligibilityModule)}</ProtectedRoute>} />
         <Route path="/scheduling" element={<ProtectedRoute>{lazyRoute(SchedulingModule)}</ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute>{lazyRoute(NotificationsModule)}</ProtectedRoute>} />
         <Route path="/audit" element={<ProtectedRoute>{lazyRoute(AuditModule)}</ProtectedRoute>} />
         <Route path="/observability" element={<ProtectedRoute>{lazyRoute(ObservabilityPage)}</ProtectedRoute>} />
+        <Route path="/kpi" element={<ProtectedRoute>{lazyRoute(NursingKpiPage)}</ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute>{lazyRoute(AdminModule)}</ProtectedRoute>} />
         <Route path="/roles" element={<ProtectedRoute>{lazyRoute(RoleMatrixPage)}</ProtectedRoute>} />
         <Route path="/contracts" element={<ProtectedRoute>{lazyRoute(ContractsPage)}</ProtectedRoute>} />

@@ -2,12 +2,62 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" href="/logo.jpg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AIGH Nursing Workforce Management</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
-      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+      :root {
+        --brand:       #1a6b4e;
+        --brand-lt:    #e8f5ef;
+        --acc:         #2563eb;
+        --acc-lt:      #eff6ff;
+        --bg:          #f0f4f8;
+        --surface:     #ffffff;
+        --border:      #e2e8f0;
+        --text:        #1e293b;
+        --text-2:      #64748b;
+        --sidebar-bg:  #0f3024;
+        --sidebar-w:   244px;
+        --sidebar-w-c: 64px;
+        --header-h:    60px;
+        --shadow:      0 1px 3px rgba(0,0,0,.08);
+        --radius:      8px;
+      }
+      [data-theme="dark"] {
+        --bg:       #0d1117;
+        --surface:  #161b22;
+        --border:   #30363d;
+        --text:     #e6edf3;
+        --text-2:   #8b949e;
+        --brand-lt: #0d2818;
+        --acc-lt:   #0d1a33;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      [lang="ar"] body, .rtl body { font-family: 'Noto Sans Arabic', 'Inter', sans-serif; }
       #root { min-height: 100vh; }
+
+      /* Sidebar custom scrollbar */
+      .ant-layout-sider ::-webkit-scrollbar { width: 4px; }
+      .ant-layout-sider ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 2px; }
+
+      /* Card polish */
+      .ant-card { border-radius: var(--radius) !important; box-shadow: var(--shadow) !important; }
+
+      /* Table header bg matches brand-lt */
+      .ant-table-thead > tr > th { background: var(--brand-lt) !important; color: var(--text) !important; font-weight: 600 !important; }
+
+      /* Smooth layout transitions */
+      .ant-layout, .ant-layout-sider { transition: all .22s cubic-bezier(.4,0,.2,1) !important; }
     </style>
   </head>
   <body>

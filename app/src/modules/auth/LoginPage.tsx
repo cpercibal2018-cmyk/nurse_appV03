@@ -33,7 +33,7 @@ export default function LoginPage() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #0f3024 0%, #1a6b4e 60%, #134e38 100%)', padding: 24 }}>
       <Card style={{ width: 480, boxShadow: '0 16px 48px rgba(0,0,0,0.32)', border: 'none', borderRadius: 12 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 96, objectFit: 'contain' }} />
+          <img src="/logo-light.jpg" alt="AIGH Nursing Workflow System" style={{ height: 96, objectFit: 'contain' }} />
           <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>Management System v2.8.7c — Node 20 / PG 15</Text>
         </div>
 

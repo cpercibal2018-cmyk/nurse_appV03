@@ -166,8 +166,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {/* Logo */}
           <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
             {collapsed
-              ? <img src="/logo.jpg" alt="AIGH" style={{ height: 34, width: 34, objectFit: 'cover', objectPosition: 'left', borderRadius: 4 }} />
-              : <img src="/logo.jpg" alt="AIGH Nursing Workflow System" style={{ height: 40, objectFit: 'contain', maxWidth: '100%' }} />
+              ? <img src="/logo-dark.jpg" alt="AIGH" style={{ height: 36, width: 36, objectFit: 'cover', objectPosition: 'left', borderRadius: 6 }} />
+              : <img src="/logo-dark.jpg" alt="AIGH Nursing Workflow System" style={{ height: 44, objectFit: 'contain', maxWidth: '100%', borderRadius: 6 }} />
             }
           </div>
 

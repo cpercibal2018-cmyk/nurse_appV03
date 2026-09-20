@@ -94,9 +94,17 @@ export default function ContractsPage() {
     // Newest hires first so "just onboarded" are easy to find
     .sort((a, b) => String((b as any).hireDate || '').localeCompare(String((a as any).hireDate || '')));
 
-  const renewableEmployees = employees.filter(
-    e => !(e as any).deletedAt && latestContractFor(contracts, e.id),
-  );
+  const RENEWAL_INTENDED_STATUSES = ['Expired', 'Suspended', 'Terminated', 'Superseded'];
+  const renewableEmployees = employees.filter(e => {
+    if ((e as any).deletedAt) return false;
+    const latest = latestContractFor(contracts, e.id);
+    if (!latest) return false;
+    if (RENEWAL_INTENDED_STATUSES.includes(latest.status)) return true;
+    if (['Approved', 'Active'].includes(latest.status)) {
+      return new Date(latest.endDate) < new Date(new Date().toDateString());
+    }
+    return false;
+  });
 
   const renewEmployeeId = Form.useWatch('employeeId', renewForm);
   const renewStartWatch = Form.useWatch('startDate', renewForm);

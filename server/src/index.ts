@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
+import { signToken, requireAuth, requireRole, WRITE_ROLES, ACCESS_TOKEN_TTL_SECONDS } from './auth.js';
 
 const prisma = new PrismaClient();
 const app = express();
@@ -81,17 +82,25 @@ app.get('/api/health', async (_req, res) => {
   catch { res.status(503).json({ status: 'degraded', db: 'down' }); }
 });
 
-// Mock auth matching the frontend's demo accounts.
+// Login. The credential model is still the demo one — role is derived from the
+// email and any password is accepted (there is no bcrypt user store yet; that is
+// stage-2 work). What is now real is the TOKEN: a signed, expiring HS256 JWT
+// that every data route below verifies. That is what turns the API from
+// anonymous into authenticated.
 app.post('/api/auth/login', (req, res) => {
   const { email } = req.body ?? {};
   if (!email || !String(email).includes('@')) return res.status(401).json({ error: 'Invalid credentials' });
   const e = String(email);
   const role = e.includes('hr') ? 'HR_ADMIN' : e.includes('admin') ? 'SYSTEM_ADMIN' : e.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
-  res.json({ user: { id: 1, name: e.split('@')[0], role, email: e }, token: 'demo-' + Math.random().toString(36).slice(2) });
+  const name = e.split('@')[0];
+  const token = signToken({ sub: 1, email: e, role, name });
+  res.json({ user: { id: 1, name, role, email: e }, token, expiresIn: ACCESS_TOKEN_TTL_SECONDS });
 });
 
+// Every route below requires a valid token. Health and login stay public.
+
 // One call hydrates the whole app.
-app.get('/api/bootstrap', async (_req, res) => {
+app.get('/api/bootstrap', requireAuth, async (_req, res) => {
   try {
     const [departments, units, positions, employees, contracts, credentialCategories,
       credentialTemplates, credentialRequirements, credentials, shiftAssignments, notifications, auditEntries] =
@@ -107,13 +116,13 @@ app.get('/api/bootstrap', async (_req, res) => {
 
 // Generic CRUD for every registered entity. Reads are open to any collection in
 // the registry; writes are refused for anything marked readOnly.
-app.get('/api/:entity', async (req, res) => {
+app.get('/api/:entity', requireAuth, async (req, res) => {
   const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
   try { res.json(await cfg.model.findMany()); } catch (e) { serverError(res, e); }
 });
 
-app.post('/api/:entity', async (req, res) => {
+app.post('/api/:entity', requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
   if (cfg.readOnly) return refuseWrite(res, req.params.entity, cfg.readOnly);
@@ -121,7 +130,7 @@ app.post('/api/:entity', async (req, res) => {
   catch (e) { writeError(res, e); }
 });
 
-app.put('/api/:entity/:id', async (req, res) => {
+app.put('/api/:entity/:id', requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
   if (cfg.readOnly) return refuseWrite(res, req.params.entity, cfg.readOnly);
@@ -131,7 +140,7 @@ app.put('/api/:entity/:id', async (req, res) => {
   } catch (e) { writeError(res, e); }
 });
 
-app.delete('/api/:entity/:id', async (req, res) => {
+app.delete('/api/:entity/:id', requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
   if (cfg.readOnly) return refuseWrite(res, req.params.entity, cfg.readOnly);

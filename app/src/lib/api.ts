@@ -5,6 +5,13 @@ const BASE = (import.meta as any).env?.VITE_API_URL as string | undefined;
 
 export const API_ENABLED = !!BASE;
 
+// The access token (a signed JWT from /api/auth/login) is held in memory only —
+// never in localStorage — so injected script cannot read it back and it clears
+// when the tab closes. Every request attaches it as a Bearer header.
+let authToken: string | null = null;
+export const setAuthToken = (t: string | null) => { authToken = t; };
+export const getAuthToken = () => authToken;
+
 async function req(path: string, init?: RequestInit) {
   // Standalone mode: there is no backend to talk to. Short-circuiting here —
   // rather than letting `${BASE}${path}` build "undefined/api/…" — is what keeps
@@ -13,9 +20,11 @@ async function req(path: string, init?: RequestInit) {
   // evaluates `syncWrite(api.create(…))`'s argument first, so the request is
   // already in flight by the time syncWrite decides to do nothing.
   if (!API_ENABLED) return null;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) },
   });
   if (!res.ok) throw new Error(`API ${res.status} ${path}`);
   return res.status === 204 ? null : res.json();
@@ -24,7 +33,12 @@ async function req(path: string, init?: RequestInit) {
 export const api = {
   enabled: API_ENABLED,
   bootstrap: () => req('/api/bootstrap'),
-  login: (email: string, password: string) => req('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  // Log in, then keep the returned JWT so subsequent calls are authenticated.
+  login: async (email: string, password: string) => {
+    const r = await req('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+    if (r?.token) setAuthToken(r.token);
+    return r;
+  },
   create: (entity: string, data: any) => req(`/api/${entity}`, { method: 'POST', body: JSON.stringify(data) }),
   update: (entity: string, id: number | string, data: any) => req(`/api/${entity}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (entity: string, id: number | string) => req(`/api/${entity}/${id}`, { method: 'DELETE' }),

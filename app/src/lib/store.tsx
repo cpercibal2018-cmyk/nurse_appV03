@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED, UNASSIGNED_UNIT_ID } from '../data/seed';
 import { toHijriIso } from './hijri';
 import { providesCoverage, periodsOverlap, checkContractCopyCandidate } from './contracts';
-import { api, API_ENABLED, syncWrite } from './api';
+import { api, API_ENABLED, syncWrite, setAuthToken } from './api';
 
 export type Employee = {
   id: number;
@@ -328,9 +328,18 @@ export const useStore = create<Store>()(
         const user = { id: 1, name: email.split('@')[0], role, email };
         set({ isAuthenticated: true, currentUser: user, csrfToken: Math.random().toString(36).substring(2) });
         get().addAuditEntry({ actorId: 1, action: 'LOGIN', resource: 'auth', resourceId: '1', changes: { email } });
+        // When a backend is configured, exchange the credentials for a real JWT
+        // and re-hydrate authenticated — the startup hydrate ran before login and
+        // is now rejected (401) by the protected API. Fire-and-forget so the UI
+        // stays synchronous; a failure just leaves the app on its seed data.
+        if (API_ENABLED) {
+          api.login(email, password)
+            .then(() => get().hydrateFromApi())
+            .catch((e) => console.warn('[auth] API login failed (using local data):', e?.message ?? e));
+        }
         return true;
       },
-      logout: () => set({ isAuthenticated: false, currentUser: null }),
+      logout: () => { setAuthToken(null); set({ isAuthenticated: false, currentUser: null }); },
 
       apiHydrated: false,
       hydrateFromApi: async () => {

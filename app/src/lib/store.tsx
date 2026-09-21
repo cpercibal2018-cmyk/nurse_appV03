@@ -676,6 +676,7 @@ export const useStore = create<Store>()(
         set((s) => ({
           employees: s.employees.map(e => e.id === employeeId ? { ...e, position: positionCode } : e),
         }));
+        syncWrite(api.update('employees', employeeId, { position: positionCode }));
         get().addAuditEntry({
           actorId: state.currentUser?.id || 1,
           action: 'POSITION_ASSIGNED',
@@ -783,10 +784,12 @@ export const useStore = create<Store>()(
           storageKey: `vault/contracts/${contractId}/v${version}/${file.name}`,
         };
 
+        const updatedCopies = [...(contract.contractCopy ?? []), attachment];
         contractCopyBytes.set(id, file.bytes);
         set((s) => ({
-          contracts: s.contracts.map(c => c.id === contractId ? { ...c, contractCopy: [...(c.contractCopy ?? []), attachment] } : c),
+          contracts: s.contracts.map(c => c.id === contractId ? { ...c, contractCopy: updatedCopies } : c),
         }));
+        syncWrite(api.update('contracts', contractId, { contractCopy: updatedCopies }));
         get().addAuditEntry({
           actorId: state.currentUser?.id ?? null,
           action: 'CONTRACT_COPY_ATTACHED',
@@ -826,6 +829,7 @@ export const useStore = create<Store>()(
         set((s) => ({
           contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
         }));
+        syncWrite(api.update('contracts', id, data));
       },
 
       credentials: [
@@ -835,12 +839,17 @@ export const useStore = create<Store>()(
       ] as Credential[],
       addCredential: (cred) => {
         const id = Math.max(0, ...get().credentials.map(c => c.id)) + 1;
-        set((s) => ({ credentials: [...s.credentials, { ...cred, id }] }));
+        const newCred = { ...cred, id };
+        set((s) => ({ credentials: [...s.credentials, newCred] }));
+        syncWrite(api.create('credentials', newCred));
         return id;
       },
-      updateCredential: (id, data) => set((s) => ({
-        credentials: s.credentials.map(c => c.id === id ? { ...c, ...data } : c)
-      })),
+      updateCredential: (id, data) => {
+        set((s) => ({
+          credentials: s.credentials.map(c => c.id === id ? { ...c, ...data } : c)
+        }));
+        syncWrite(api.update('credentials', id, data));
+      },
 
       /**
        * Attach PDF evidence to a credential.

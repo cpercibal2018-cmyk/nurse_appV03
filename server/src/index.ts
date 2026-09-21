@@ -1,12 +1,19 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
-import { signToken, requireAuth, requireRole, WRITE_ROLES, ACCESS_TOKEN_TTL_SECONDS } from './auth.js';
+import {
+  signToken, requireAuth, requireRole, WRITE_ROLES, ACCESS_TOKEN_TTL_SECONDS,
+  randomToken, sha256hex, REFRESH_TTL_SECONDS, REFRESH_COOKIE, CSRF_COOKIE,
+  refreshCookieOptions, csrfCookieOptions, csrfOk, originOk,
+} from './auth.js';
 
 const prisma = new PrismaClient();
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || true, credentials: true }));
 app.use(express.json({ limit: '5mb' }));
+app.use(cookieParser());
 
 // Entity registry — url segment -> { delegate, idField, idIsInt, readOnly }.
 // One generic set of handlers covers every table so the API stays small.
@@ -82,19 +89,113 @@ app.get('/api/health', async (_req, res) => {
   catch { res.status(503).json({ status: 'degraded', db: 'down' }); }
 });
 
-// Login. The credential model is still the demo one — role is derived from the
-// email and any password is accepted (there is no bcrypt user store yet; that is
-// stage-2 work). What is now real is the TOKEN: a signed, expiring HS256 JWT
-// that every data route below verifies. That is what turns the API from
-// anonymous into authenticated.
-app.post('/api/auth/login', (req, res) => {
-  const { email } = req.body ?? {};
-  if (!email || !String(email).includes('@')) return res.status(401).json({ error: 'Invalid credentials' });
-  const e = String(email);
-  const role = e.includes('hr') ? 'HR_ADMIN' : e.includes('admin') ? 'SYSTEM_ADMIN' : e.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
-  const name = e.split('@')[0];
-  const token = signToken({ sub: 1, email: e, role, name });
-  res.json({ user: { id: 1, name, role, email: e }, token, expiresIn: ACCESS_TOKEN_TTL_SECONDS });
+// Issue a fresh refresh session (row + cookie) and CSRF token for a user.
+// The cookie carries "<sessionId>.<secret>"; only sha256(secret) is stored.
+async function startSession(res: express.Response, user: { id: number }, familyId?: string) {
+  const id = randomToken(16);
+  const secret = randomToken(32);
+  const family = familyId ?? randomToken(16);
+  await prisma.refreshSession.create({
+    data: {
+      id,
+      userId: user.id,
+      tokenHash: sha256hex(secret),
+      familyId: family,
+      expiresAt: new Date(Date.now() + REFRESH_TTL_SECONDS * 1000),
+    },
+  });
+  res.cookie(REFRESH_COOKIE, `${id}.${secret}`, refreshCookieOptions());
+  const csrf = randomToken(24);
+  res.cookie(CSRF_COOKIE, csrf, csrfCookieOptions());
+  return csrf;
+}
+
+function issueAccess(user: { id: number; email: string; role: string; name: string }) {
+  return signToken({ sub: user.id, email: user.email, role: user.role, name: user.name });
+}
+
+// Login — real credential check against the bcrypt user store. On success it
+// returns a short-lived access JWT (in the body, for in-memory use) and sets a
+// rotating HttpOnly refresh cookie plus a readable CSRF token.
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body ?? {};
+    if (!email || !password) return res.status(401).json({ error: 'Invalid credentials' });
+    const user = await prisma.user.findUnique({ where: { email: String(email) } });
+    // Always run a compare (even when the user is missing) to blunt timing-based
+    // account enumeration, then fail identically for "no user" and "bad password".
+    const hash = user?.passwordHash ?? '$2a$10$0000000000000000000000000000000000000000000000000000';
+    const ok = await bcrypt.compare(String(password), hash);
+    if (!user || !user.isActive || !ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const token = issueAccess(user);
+    const csrf = await startSession(res, user);
+    res.json({
+      user: { id: user.id, name: user.name, role: user.role, email: user.email },
+      token, csrfToken: csrf, expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
+  } catch (e) { serverError(res, e); }
+});
+
+// Refresh — rotate the refresh token and mint a new access token. Requires the
+// Origin check + CSRF double-submit because it acts on a cookie. Reuse of an
+// already-rotated token is treated as theft: the whole family is revoked.
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    if (!originOk(req)) return res.status(403).json({ error: 'Bad origin' });
+    if (!csrfOk(req)) return res.status(403).json({ error: 'CSRF check failed' });
+
+    const raw = req.cookies?.[REFRESH_COOKIE];
+    if (!raw || typeof raw !== 'string' || !raw.includes('.')) {
+      return res.status(401).json({ error: 'No refresh token' });
+    }
+    const [id, secret] = raw.split('.');
+    const session = await prisma.refreshSession.findUnique({ where: { id } });
+    if (!session || session.tokenHash !== sha256hex(secret ?? '')) {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+    if (session.revokedAt) {
+      // A revoked (already-rotated) token was replayed → likely stolen. Burn the
+      // whole rotation family so neither the attacker nor the victim can continue.
+      await prisma.refreshSession.updateMany({
+        where: { familyId: session.familyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      return res.status(401).json({ error: 'Refresh token reuse detected' });
+    }
+    if (session.expiresAt < new Date()) return res.status(401).json({ error: 'Refresh token expired' });
+
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    if (!user || !user.isActive) return res.status(401).json({ error: 'User inactive' });
+
+    // Rotate: revoke the presented session, start a new one in the same family.
+    await prisma.refreshSession.update({ where: { id }, data: { revokedAt: new Date() } });
+    const csrf = await startSession(res, user, session.familyId);
+    res.json({
+      user: { id: user.id, name: user.name, role: user.role, email: user.email },
+      token: issueAccess(user), csrfToken: csrf, expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
+  } catch (e) { serverError(res, e); }
+});
+
+// Logout — revoke the current refresh session and clear the cookies.
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const raw = req.cookies?.[REFRESH_COOKIE];
+    if (typeof raw === 'string' && raw.includes('.')) {
+      const [id] = raw.split('.');
+      await prisma.refreshSession.updateMany({ where: { id, revokedAt: null }, data: { revokedAt: new Date() } });
+    }
+    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+    res.clearCookie(CSRF_COOKIE, { path: '/' });
+    res.status(204).end();
+  } catch (e) { serverError(res, e); }
+});
+
+// Who am I — cheap way for the SPA to confirm its access token is still valid.
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  const u = req.user!;
+  res.json({ user: { id: u.sub, name: u.name, role: u.role, email: u.email } });
 });
 
 // Every route below requires a valid token. Health and login stay public.

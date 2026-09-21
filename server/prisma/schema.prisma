@@ -159,3 +159,33 @@ model AuditEntry {
   createdAt    String?
   isEncrypted  Boolean @default(false)
 }
+
+// ── Authentication (stage 2) ────────────────────────────────────────────────
+// Real credential store: passwords are bcrypt-hashed, never stored in plain
+// text. RefreshSession backs rotating refresh tokens with reuse detection.
+
+model User {
+  id           Int              @id @default(autoincrement())
+  email        String           @unique
+  name         String
+  role         String
+  passwordHash String
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  sessions     RefreshSession[]
+}
+
+model RefreshSession {
+  id        String    @id            // opaque token id (the jti carried in the cookie)
+  userId    Int
+  tokenHash String                   // sha256 of the refresh secret — the raw value is never stored
+  familyId  String                   // rotation family; reuse of a rotated token revokes the whole family
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([familyId])
+}

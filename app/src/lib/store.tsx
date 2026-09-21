@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { DEPARTMENTS, NURSING_UNITS, POSITIONS, CREDENTIAL_TEMPLATES, CREDENTIAL_CATEGORIES, EMPLOYEES_SEED, CONTRACTS_SEED, CREDENTIAL_REQUIREMENTS_SEED, BED_CAPACITY_LOG_SEED, UNASSIGNED_UNIT_ID } from '../data/seed';
 import { toHijriIso } from './hijri';
 import { providesCoverage, periodsOverlap, checkContractCopyCandidate } from './contracts';
-import { api, API_ENABLED, syncWrite, setAuthToken } from './api';
+import { api, API_ENABLED, syncWrite } from './api';
 
 export type Employee = {
   id: number;
@@ -339,7 +339,7 @@ export const useStore = create<Store>()(
         }
         return true;
       },
-      logout: () => { setAuthToken(null); set({ isAuthenticated: false, currentUser: null }); },
+      logout: () => { void api.logout(); set({ isAuthenticated: false, currentUser: null }); },
 
       apiHydrated: false,
       hydrateFromApi: async () => {

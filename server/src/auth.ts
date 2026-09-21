@@ -115,3 +115,69 @@ export function requireRole(...roles: string[]) {
 
 /** Roles allowed to mutate data through the generic CRUD routes. */
 export const WRITE_ROLES = ['HR_ADMIN', 'SYSTEM_ADMIN'];
+
+// ── Refresh tokens & CSRF (stage 2) ─────────────────────────────────────────
+
+const isProd = process.env.NODE_ENV === 'production';
+
+export const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+export const REFRESH_COOKIE = 'nurseapp_refresh';
+export const CSRF_COOKIE = 'nurseapp_csrf';
+
+/** URL-safe random string (default 32 bytes of entropy). */
+export const randomToken = (bytes = 32) => crypto.randomBytes(bytes).toString('base64url');
+
+/** SHA-256 hex — used to store only a hash of the refresh secret, never the secret. */
+export const sha256hex = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+/** Cookie options for the HttpOnly refresh token — never readable by script. */
+export function refreshCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: isProd, // require HTTPS in production; off for local http dev
+    path: '/api/auth', // only ever sent to the auth endpoints
+    maxAge: REFRESH_TTL_SECONDS * 1000,
+  };
+}
+
+/** Cookie options for the CSRF token — deliberately readable so the SPA can echo it. */
+export function csrfCookieOptions() {
+  return {
+    httpOnly: false,
+    sameSite: 'lax' as const,
+    secure: isProd,
+    path: '/',
+    maxAge: REFRESH_TTL_SECONDS * 1000,
+  };
+}
+
+/**
+ * Double-submit CSRF check: the X-CSRF-Token header must equal the CSRF cookie.
+ * A cross-site attacker can ride the cookie but cannot read it to set the header.
+ */
+export function csrfOk(req: Request): boolean {
+  const cookieToken = (req as any).cookies?.[CSRF_COOKIE];
+  const headerToken = req.headers['x-csrf-token'];
+  const header = Array.isArray(headerToken) ? headerToken[0] : headerToken;
+  return !!cookieToken && !!header && constantTimeEqual(String(cookieToken), String(header));
+}
+
+/**
+ * Origin allow-list check for state-changing auth requests (defense in depth
+ * alongside CSRF). If an Origin/Referer is present it must match; requests with
+ * neither (e.g. curl) are allowed through to the CSRF gate.
+ */
+export function originOk(req: Request): boolean {
+  const allowed = process.env.CORS_ORIGIN;
+  if (!allowed) return true; // not configured → don't block (dev)
+  const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : '');
+  if (!origin) return true;
+  return origin === allowed;
+}

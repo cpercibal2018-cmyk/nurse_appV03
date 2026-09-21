@@ -1,7 +1,19 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import SEED from './seed-data.json';
 
 const prisma = new PrismaClient();
+
+// Demo login accounts (stage-2 real credentials). All share one demo password;
+// role is fixed on the row now, not derived from the email at login time.
+// Change or remove these before any non-demo deployment.
+const DEMO_PASSWORD = 'demo1234';
+const USERS = [
+  { email: 'hr.admin@aigh.sa',   name: 'HR Admin',           role: 'HR_ADMIN' },
+  { email: 'admin@aigh.sa',      name: 'System Admin',       role: 'SYSTEM_ADMIN' },
+  { email: 'supervisor@aigh.sa', name: 'Ward Supervisor',    role: 'SUPERVISOR' },
+  { email: 'nurse@aigh.sa',      name: 'Staff Nurse',        role: 'EMPLOYEE' },
+];
 
 // ---------------------------------------------------------------------------
 // Shared demo data is GENERATED, not inlined.
@@ -62,6 +74,8 @@ const SHIFT_ASSIGNMENTS = [
 async function main() {
   console.log('Seeding AIGH database...');
   // Clear (dev-only) then insert in FK-safe order.
+  await prisma.refreshSession.deleteMany();
+  await prisma.user.deleteMany();
   await prisma.shiftAssignment.deleteMany();
   await prisma.credential.deleteMany();
   await prisma.credentialRequirement.deleteMany();
@@ -86,6 +100,9 @@ async function main() {
   await prisma.credential.createMany({ data: CREDENTIALS as any });
   await prisma.shiftAssignment.createMany({ data: SHIFT_ASSIGNMENTS });
 
+  const passwordHash = bcrypt.hashSync(DEMO_PASSWORD, 10);
+  await prisma.user.createMany({ data: USERS.map((u) => ({ ...u, passwordHash })) });
+
   const counts = {
     departments: await prisma.department.count(),
     units: await prisma.unit.count(),
@@ -95,8 +112,10 @@ async function main() {
     templates: await prisma.credentialTemplate.count(),
     credentials: await prisma.credential.count(),
     shifts: await prisma.shiftAssignment.count(),
+    users: await prisma.user.count(),
   };
   console.log('Seed complete:', counts);
+  console.log(`Demo login: ${USERS.map((u) => u.email).join(', ')} — password "${DEMO_PASSWORD}"`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

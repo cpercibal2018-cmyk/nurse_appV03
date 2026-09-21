@@ -1,0 +1,8 @@
+# The generated seed snapshot is compared byte-for-byte in the test suite
+# against an exporter that always writes LF. Without this, Git checks it out as
+# CRLF on Windows and the "snapshot matches seed.ts" test fails spuriously.
+server/prisma/seed-data.json text eol=lf
+
+# The export script itself and the seed source write/read LF — keep them stable.
+app/scripts/export-seed-data.mjs text eol=lf
+app/src/data/seed.ts text eol=lf

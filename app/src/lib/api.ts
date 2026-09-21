@@ -16,10 +16,20 @@ export const setAuthToken = (t: string | null) => { authToken = t; };
 export const getAuthToken = () => authToken;
 export const setCsrfToken = (t: string | null) => { csrfToken = t; };
 
+// Read the (non-HttpOnly) CSRF cookie so the double-submit header can be sent
+// even after a reload, when the in-memory copy is gone. The refresh cookie is
+// HttpOnly and never readable here — only this CSRF value is.
+function readCsrfCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const m = document.cookie.match(/(?:^|;\s*)nurseapp_csrf=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 async function raw(path: string, init?: RequestInit) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const csrf = csrfToken || readCsrfCookie();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
   return fetch(`${BASE}${path}`, {
     ...init,
     credentials: 'include', // send/receive the HttpOnly refresh + CSRF cookies
@@ -47,17 +57,30 @@ async function req(path: string, init?: RequestInit, _retried = false): Promise<
 
 // Exchange the HttpOnly refresh cookie for a new access token. Returns true on
 // success. Never throws — callers treat failure as "session over".
-async function tryRefresh(): Promise<boolean> {
-  try {
-    const res = await raw('/api/auth/refresh', { method: 'POST' });
-    if (!res.ok) return false;
-    const r = await res.json();
-    if (r?.token) setAuthToken(r.token);
-    if (r?.csrfToken) setCsrfToken(r.csrfToken);
-    return !!r?.token;
-  } catch {
-    return false;
-  }
+//
+// Single-flight: concurrent callers share one in-flight request. Refresh
+// ROTATES the token server-side, so two parallel refreshes would present the
+// same cookie and the second would look like a replay — tripping the server's
+// reuse detection and burning the whole session family. React StrictMode's
+// double-invoked mount effect and racing 401s both hit this, so dedupe here.
+let refreshInFlight: Promise<boolean> | null = null;
+function tryRefresh(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const res = await raw('/api/auth/refresh', { method: 'POST' });
+      if (!res.ok) return false;
+      const r = await res.json();
+      if (r?.token) setAuthToken(r.token);
+      if (r?.csrfToken) setCsrfToken(r.csrfToken);
+      return !!r?.token;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
 }
 
 export const api = {
@@ -73,6 +96,7 @@ export const api = {
     return r;
   },
   refresh: tryRefresh,
+  me: () => req('/api/auth/me'),
   logout: async () => {
     if (API_ENABLED) { try { await raw('/api/auth/logout', { method: 'POST' }); } catch { /* best effort */ } }
     setAuthToken(null);

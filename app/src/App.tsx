@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/AppLayout';
 import { PageSkeleton } from './components/PageSkeleton';
@@ -31,18 +31,35 @@ function lazyRoute(Component: React.LazyExoticComponent<any>) {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useStore();
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const sessionChecked = useStore((s) => s.sessionChecked);
+  // Wait for the startup session check before deciding — otherwise a valid
+  // session (restored from the refresh cookie) would be bounced to /login.
+  if (!sessionChecked) return <PageSkeleton />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <AppLayout>{children}</AppLayout>;
 }
 
+// The login route redirects into the app once a session exists, so a restored
+// session (or a fresh login) lands on the dashboard instead of the form.
+function LoginRoute() {
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const sessionChecked = useStore((s) => s.sessionChecked);
+  if (!sessionChecked) return <PageSkeleton />;
+  if (isAuthenticated) return <Navigate to="/" replace />;
+  return lazyRoute(LoginPage);
+}
+
 export default function App() {
+  // Restore a prior session (from the HttpOnly refresh cookie) on startup, from
+  // inside the React tree so it runs against the same store instance the
+  // components subscribe to. Runs once; a no-op without a backend.
+  useEffect(() => { void useStore.getState().restoreSession(); }, []);
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={lazyRoute(LoginPage)} />
+        <Route path="/login" element={<LoginRoute />} />
         <Route path="/" element={<ProtectedRoute>{lazyRoute(DashboardPage)}</ProtectedRoute>} />
         <Route path="/workforce" element={<ProtectedRoute>{lazyRoute(WorkforcePage)}</ProtectedRoute>} />
         <Route path="/units" element={<ProtectedRoute>{lazyRoute(UnitCapacityGrid)}</ProtectedRoute>} />

@@ -177,7 +177,12 @@ export function csrfOk(req: Request): boolean {
 export function originOk(req: Request): boolean {
   const allowed = process.env.CORS_ORIGIN;
   if (!allowed) return true; // not configured → don't block (dev)
-  const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : '');
+  let origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+  if (!origin && typeof req.headers.referer === 'string') {
+    // A malformed Referer must not throw (that would 500 the request); treat an
+    // unparseable value as "no origin" and defer to the CSRF check.
+    try { origin = new URL(req.headers.referer).origin; } catch { origin = ''; }
+  }
   if (!origin) return true;
   return origin === allowed;
 }

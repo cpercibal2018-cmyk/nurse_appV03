@@ -186,6 +186,11 @@ type Store = {
   login: (email: string, password: string) => boolean;
   /** When the backend API is configured, replace seed slices with DB data. */
   hydrateFromApi: () => Promise<void>;
+  /** On startup, use the HttpOnly refresh cookie to restore a session silently. */
+  restoreSession: () => Promise<void>;
+  /** False until the startup session check finishes; routing waits on this so it
+   *  doesn't bounce to /login before a valid session has had a chance to load. */
+  sessionChecked: boolean;
   apiHydrated: boolean;
   logout: () => void;
 
@@ -341,6 +346,28 @@ export const useStore = create<Store>()(
       },
       logout: () => { void api.logout(); set({ isAuthenticated: false, currentUser: null }); },
 
+      // Startup session restore: the access token is memory-only and gone after a
+      // reload, but the HttpOnly refresh cookie survives. Trade it for a fresh
+      // access token, confirm the identity, and mark the app authenticated so the
+      // session persists across reloads without re-entering the password.
+      restoreSession: async () => {
+        if (!API_ENABLED) return; // sessionChecked already true (see init)
+        try {
+          const ok = await api.refresh();
+          if (ok) {
+            const { user } = await api.me();
+            set({ isAuthenticated: true, currentUser: user });
+            await get().hydrateFromApi();
+          }
+        } catch (e: any) {
+          console.warn('[auth] session restore failed:', e?.message ?? e);
+        } finally {
+          set({ sessionChecked: true });
+        }
+      },
+
+      // Without a backend there is nothing to restore, so the check is done.
+      sessionChecked: !API_ENABLED,
       apiHydrated: false,
       hydrateFromApi: async () => {
         if (!API_ENABLED) return;

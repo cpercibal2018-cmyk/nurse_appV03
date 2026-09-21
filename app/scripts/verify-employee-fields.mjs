@@ -9,7 +9,7 @@
 // driven directly. Exits non-zero on any failed assertion so it can gate CI.
 
 import { build } from 'esbuild';
-import { writeFileSync, readFileSync, mkdtempSync } from 'fs';
+import { writeFileSync, readFileSync, mkdtempSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -48,6 +48,13 @@ const check = (name, cond, detail) => {
   else { fail++; console.log('  FAIL  ' + name + (detail === undefined ? '' : '  → got ' + JSON.stringify(detail))); }
 };
 const rejects = fn => { try { fn(); return null; } catch (e) { return e.message; } };
+
+// An unhandled rejection is fatal under Node — it is what used to kill this suite
+// part-way through section [9], hiding every later failure — and is console noise
+// in the browser. Registering a listener records it as a failure instead of
+// letting it take the process down.
+const unhandled = [];
+process.on('unhandledRejection', (reason) => unhandled.push(reason?.message ?? String(reason)));
 
 const { toHijri, toHijriShort, toHijriIso } = await bundle('src/lib/hijri.ts');
 const storeMod = await bundle('src/lib/store.tsx');
@@ -154,36 +161,58 @@ check('File No. placeholder shows a plain number', /name="fileNo"[\s\S]{0,120}pl
 
 
 console.log('\n[9] Contract guards hold in the store, not just in a screen');
-const { latestContractFor, renewalPeriodAfter, periodsOverlap, providesCoverage } = await bundle('src/lib/contracts.ts');
+const { latestContractFor, renewalPeriodAfter, periodsOverlap, providesCoverage, isEmployeeRenewable } = await bundle('src/lib/contracts.ts');
 
 check('contract for an unknown employee rejected', /EMPLOYEE_NOT_FOUND/.test(rejects(() => s().addContract({ employeeId: 99999, startDate: '2030-01-01', endDate: '2031-01-01', status: 'Draft' })) || ''), rejects(() => s().addContract({ employeeId: 99999, startDate: '2030-01-01', endDate: '2031-01-01', status: 'Draft' })));
 const tempId = s().addEmployee({ firstName: 'Temp', lastName: 'Delete', jobNumber: 'TMP-DEL-1', unitId: 1, position: 'SN', contactEmail: 'tmp@aigh.sa', contractStart: '2026-01-01', contractEnd: '2026-06-30' });
 s().deleteEmployee(tempId);
 check('contract for a soft-deleted employee rejected', /EMPLOYEE_NOT_FOUND/.test(rejects(() => s().addContract({ employeeId: tempId, startDate: '2027-01-01', endDate: '2028-01-01', status: 'Draft' })) || ''));
 
-// Employee 1 carries the seeded Active contract 2023-01-15 → 2026-01-14.
-const seededContract = s().contracts.find(c => c.employeeId === 1);
-check('seeded coverage contract is Active', seededContract.status === 'Active', seededContract.status);
-check('overlapping Approved period rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Approved' })) || ''));
-check('overlapping Active period rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Active' })) || ''));
-check('overlap message names the clashing period', /2023-01-15/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Approved' })) || ''));
+// ── Fixture owned by sections [9]–[11] ───────────────────────────────────────
+// These three sections used to read employee 1's SEEDED contract and assume it
+// was Active 2023-01-15 → 2026-01-14. The demo seed now deliberately spreads
+// statuses across the renewal states (employee 1 is Expired), so that premise is
+// gone. Worse, the assertions are order-dependent: a check that *should* throw
+// but does not still mutates the shared store, so later sections pass for the
+// wrong reason. Build the coverage period explicitly instead — one employee this
+// section owns — so a future seed edit cannot silently invalidate the guard.
+const fxId = s().addEmployee({
+  firstName: 'Fixture', lastName: 'Coverage', jobNumber: 'FX-1',
+  unitId: 1, position: 'SN', contactEmail: 'fixture@aigh.sa',
+  contractStart: '2023-01-15', contractEnd: '2026-01-14',
+});
+// addEmployee creates the onboarding contract as a Draft (no coverage yet);
+// promote it so the fixture has a real coverage period to clash against.
+const fxOnboardContract = s().contracts.find(c => c.employeeId === fxId);
+check('onboarding creates the contract as a Draft', fxOnboardContract.status === 'Draft', fxOnboardContract.status);
+s().updateContract(fxOnboardContract.id, { status: 'Active' });
+check('fixture coverage period is Active 2023-01-15 → 2026-01-14',
+  s().contracts.find(c => c.id === fxOnboardContract.id).status === 'Active');
+
+check('overlapping Approved period rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().addContract({ employeeId: fxId, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Approved' })) || ''));
+check('overlapping Active period rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().addContract({ employeeId: fxId, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Active' })) || ''));
+const overlapMsg = rejects(() => s().addContract({ employeeId: fxId, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Approved' })) || '';
+check('overlap message names the clashing period', /2023-01-15/.test(overlapMsg), overlapMsg);
+check('overlap message names the employee Job Number', /FX-1/.test(overlapMsg), overlapMsg);
+check('a rejected overlap leaves no row behind',
+  !s().contracts.some(c => c.employeeId === fxId && c.startDate === '2025-01-01' && c.status === 'Approved'));
 const draftCount = s().contracts.length;
-s().addContract({ employeeId: 1, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Draft' });
+s().addContract({ employeeId: fxId, startDate: '2025-01-01', endDate: '2025-12-31', status: 'Draft' });
 check('overlapping Draft allowed (provides no coverage)', s().contracts.length === draftCount + 1);
-check('end on or before start rejected', /after start/.test(rejects(() => s().addContract({ employeeId: 1, startDate: '2030-05-05', endDate: '2030-05-05', status: 'Draft' })) || ''));
+check('end on or before start rejected', /after start/.test(rejects(() => s().addContract({ employeeId: fxId, startDate: '2030-05-05', endDate: '2030-05-05', status: 'Draft' })) || ''));
 const beforeRenewal = s().contracts.length;
-s().addContract({ employeeId: 1, startDate: '2026-01-15', endDate: '2029-01-14', status: 'Approved' });
+s().addContract({ employeeId: fxId, startDate: '2026-01-15', endDate: '2029-01-14', status: 'Approved' });
 check('renewal starting the day after the previous end accepted', s().contracts.length === beforeRenewal + 1);
 check('renewal carries Hijri dates', /^\d{4}-\d{2}-\d{2}$/.test(s().contracts[s().contracts.length - 1].startDateHijri || ''), s().contracts[s().contracts.length - 1].startDateHijri);
 
 console.log('\n[10] updateContract enforces the same rule');
 check('unknown contract id rejected', /CONTRACT_NOT_FOUND/.test(rejects(() => s().updateContract(99999, { status: 'Active' })) || ''));
-const draft = s().contracts.find(c => c.employeeId === 1 && c.status === 'Draft' && c.startDate === '2025-01-01');
+const draft = s().contracts.find(c => c.employeeId === fxId && c.status === 'Draft' && c.startDate === '2025-01-01');
 check('target Draft located', !!draft, draft && draft.startDate);
 check('promoting an overlapping Draft to Approved rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().updateContract(draft.id, { status: 'Approved' })) || ''));
 s().updateContract(draft.id, { status: 'Terminated' });
 check('terminating an overlapping Draft is allowed (no coverage)', s().contracts.find(c => c.id === draft.id).status === 'Terminated');
-const renewal = s().contracts.find(c => c.employeeId === 1 && c.startDate === '2026-01-15');
+const renewal = s().contracts.find(c => c.employeeId === fxId && c.startDate === '2026-01-15');
 check('re-dating a coverage contract into an overlap rejected', /CONTRACT_PERIOD_OVERLAP/.test(rejects(() => s().updateContract(renewal.id, { startDate: '2025-06-01', endDate: '2027-06-01' })) || ''));
 check('re-dating within the free window is allowed', (() => { s().updateContract(renewal.id, { endDate: '2028-12-31' }); return s().contracts.find(c => c.id === renewal.id).endDate === '2028-12-31'; })());
 
@@ -196,17 +225,19 @@ const renewalWindow = renewalPeriodAfter(prior);
 check('renewal starts the day after the previous end', renewalWindow.start === '2026-01-15', renewalWindow.start);
 check('renewal runs for the same length', renewalWindow.end === '2029-01-14', renewalWindow.end);
 check('renewal of nothing is null', renewalPeriodAfter(undefined) === null);
-const latest = latestContractFor(s().contracts, 1);
+const latest = latestContractFor(s().contracts, fxId);
 check('latestContractFor prefers the coverage period with the furthest end', latest.status === 'Approved' && latest.startDate === '2026-01-15', latest && [latest.status, latest.startDate]);
 check('latestContractFor for an unknown employee is undefined', latestContractFor(s().contracts, 424242) === undefined);
 
 console.log('\n[12] A browser session saved before 2.8.7c is migrated, not replayed');
-// zustand persist stores to localStorage under this key. Seed it with the
-// pre-2.8.7c demo rows at version 0, then import a FRESH copy of the real
-// store module so persist actually rehydrates and runs its migrate step.
+// zustand persist stores to localStorage under this key. The exported helpers
+// are read off the already-loaded module (this import is a module-cache hit, not
+// a fresh instance); the genuine rehydration test is the `bundle(…, 'migrated')`
+// call below, whose distinct filename forces a second module instance so persist
+// actually runs its migrate step against what we put in localStorage.
 const { normalizePersistedEmployees, stripRetiredIdentifierPrefix, STORE_VERSION } =
   await import(pathToFileURL(join(dir, 'src_lib_store.tsx.mjs')).href);
-check('store version is declared', STORE_VERSION === 1, STORE_VERSION);
+check('store version is declared and bumped for the contract-status migration', STORE_VERSION === 2, STORE_VERSION);
 check('stripRetiredIdentifierPrefix removes F-', stripRetiredIdentifierPrefix('F-1001') === '1001', stripRetiredIdentifierPrefix('F-1001'));
 check('stripRetiredIdentifierPrefix removes AIGH-', stripRetiredIdentifierPrefix('AIGH-1001') === '1001', stripRetiredIdentifierPrefix('AIGH-1001'));
 check('stripRetiredIdentifierPrefix leaves a legal text+number job number alone', stripRetiredIdentifierPrefix('AIGH1002') === 'AIGH1002', stripRetiredIdentifierPrefix('AIGH1002'));
@@ -332,7 +363,24 @@ check('an oversized file is refused', checkContractCopyCandidate({ ...realPdf, s
 check('the declared size wins over a short head prefix', checkContractCopyCandidate({ ...realPdf, size: MAX_CONTRACT_COPY_BYTES + 1, head: PDF }).code === 'FILE_TOO_LARGE');
 check('the size is inferred from the bytes when the picker does not report one', checkContractCopyCandidate({ name: 'c.pdf', type: 'application/pdf', head: new Uint8Array(0) }).code === 'EMPTY_FILE');
 check('screen and store share one rule, so they cannot drift', /checkContractCopyCandidate\(/.test(contractsPage) && /checkContractCopyCandidate\(\{ name: file\.name, type: file\.type, head: file\.bytes \}\)/.test(storeSrc));
-check('the upload never auto-POSTs — the store verifies the bytes', /return false; \/\/ never auto-POST/.test(contractsPage));
+// Behavioural, not a grep for a comment: what actually makes Ant Design upload a
+// file is an `action=` URL or a `customRequest`. Neither is present, and every
+// picker's beforeUpload cancels the request after verifying the bytes itself.
+// Scoped per picker, because `return true` is legitimate in the onRemove handlers.
+const uploadBlocks = contractsPage.split('<Upload.Dragger').slice(1);
+check('the contract-copy picker is present in all three flows', uploadBlocks.length === 3, uploadBlocks.length);
+for (const [i, block] of uploadBlocks.entries()) {
+  const atGate = block.indexOf('beforeUpload=');
+  const atRemove = block.indexOf('onRemove=');
+  check(`picker ${i + 1} declares a beforeUpload gate before onRemove`, atGate > -1 && atRemove > atGate, { atGate, atRemove });
+  const propsRegion = block.slice(0, atGate);
+  const gateBody = block.slice(atGate, atRemove);
+  check(`picker ${i + 1} has no action= URL, so AntD cannot auto-POST the file`, !/\baction=/.test(propsRegion));
+  check(`picker ${i + 1} has no customRequest, so nothing uploads the bytes`, !/customRequest/.test(block));
+  check(`picker ${i + 1} verifies the bytes itself before accepting`, /checkContractCopyCandidate\(/.test(gateBody) && /arrayBuffer\(\)/.test(gateBody));
+  check(`picker ${i + 1} cancels the request (beforeUpload returns false)`, /return false;/.test(gateBody));
+  check(`picker ${i + 1} never returns true from beforeUpload`, !/return true;/.test(gateBody));
+}
 check('the form refuses to create a contract with no copy', /Contract copy \[PDF\] is required/.test(contractsPage));
 check('the attachment gate lives in the store, not the screen', /attachContractCopy: \(\{ contractId, file \}\) => \{/.test(storeSrc));
 
@@ -380,6 +428,212 @@ const persistedCopies = (persisted.state.contracts || []).flatMap(c => c.contrac
 check('attachment metadata is persisted', persistedCopies.some(a => a.id === v2.id), persistedCopies.map(a => a.id));
 check('attachment BYTES are never persisted to localStorage',
   JSON.stringify(persistedCopies).length < 2000 && !JSON.stringify(persisted.state.contracts).includes('%PDF'), JSON.stringify(persistedCopies).length);
+
+console.log('\n[16] The seeded contract spread feeds Create and Renew correctly');
+// Read from the seed module rather than the live store: by now earlier sections
+// have added employees and contracts, and these assertions are about the shipped
+// demo data, not about what the run happens to have mutated.
+const { CONTRACTS_SEED, EMPLOYEES_SEED } = await bundle('src/data/seed.ts', 'seedspread');
+const AS_OF_ISO = '2026-06-01';                    // fixed, so the suite is not date-sensitive
+const AS_OF = new Date(`${AS_OF_ISO}T00:00:00Z`);
+const COVERAGE = ['Approved', 'Active'];
+const PRE_COVERAGE = ['Draft', 'PendingApproval'];
+const RENEWAL_ELIGIBLE = ['Expired', 'Suspended', 'Terminated', 'Superseded'];
+
+check('every seeded contract carries a known status',
+  CONTRACTS_SEED.every(c => [...COVERAGE, ...PRE_COVERAGE, ...RENEWAL_ELIGIBLE].includes(c.status)),
+  [...new Set(CONTRACTS_SEED.map(c => c.status))]);
+check('providesCoverage agrees with the coverage set on every seeded row',
+  CONTRACTS_SEED.every(c => providesCoverage(c.status) === COVERAGE.includes(c.status)));
+check('the seed gives the Renew dropdown something to show',
+  EMPLOYEES_SEED.some(e => isEmployeeRenewable(CONTRACTS_SEED, e.id, AS_OF)));
+check('the seed gives the coverage view something to show',
+  EMPLOYEES_SEED.some(e => !isEmployeeRenewable(CONTRACTS_SEED, e.id, AS_OF)));
+check('no seeded employee is simultaneously covered and renewable',
+  EMPLOYEES_SEED.every(e => {
+    const coveredNow = CONTRACTS_SEED.some(c =>
+      c.employeeId === e.id && providesCoverage(c.status) &&
+      c.startDate <= AS_OF_ISO && c.endDate >= AS_OF_ISO);
+    return isEmployeeRenewable(CONTRACTS_SEED, e.id, AS_OF) !== coveredNow;
+  }),
+  EMPLOYEES_SEED.filter(e => isEmployeeRenewable(CONTRACTS_SEED, e.id, AS_OF)).map(e => e.id));
+
+// The rule Contracts → Create Contract implements: a brand-new hire (no contract
+// at all) or a fresh onboard still at Draft/PendingApproval. Someone whose
+// contract merely lapsed is an existing employee and belongs under Renew.
+const inCreateList = (contracts, employeeId) => {
+  const latest = latestContractFor(contracts, employeeId);
+  return !latest || PRE_COVERAGE.includes(latest.status);
+};
+check('no seeded employee is offered under Create — they all have a contract on record',
+  EMPLOYEES_SEED.every(e => !inCreateList(CONTRACTS_SEED, e.id)),
+  EMPLOYEES_SEED.filter(e => inCreateList(CONTRACTS_SEED, e.id)).map(e => e.id));
+check('lapsed coverage is not mistaken for a new hire', !inCreateList(CONTRACTS_SEED, 1));
+check('current coverage is not offered under Create', !inCreateList(CONTRACTS_SEED, 4));
+check('an employee with no contract at all is offered under Create', inCreateList(CONTRACTS_SEED, 424243));
+const newHireId = s().addEmployee({
+  firstName: 'Brand', lastName: 'New', jobNumber: 'NEW-1', unitId: 1, position: 'SN',
+  contactEmail: 'new@aigh.sa', contractStart: '2028-01-01', contractEnd: '2029-01-01',
+});
+check('a freshly onboarded employee (Draft contract) IS offered under Create', inCreateList(s().contracts, newHireId));
+check('approving that contract removes the employee from Create', (() => {
+  const draft = s().contracts.find(c => c.employeeId === newHireId);
+  s().updateContract(draft.id, { status: 'Active' });
+  return !inCreateList(s().contracts, newHireId);
+})());
+
+console.log('\n[17] The API layer is inert in standalone mode and correct when configured');
+// This is the regression that used to terminate the suite. `syncWrite(api.create(…))`
+// evaluates its argument before syncWrite runs, so a guard inside syncWrite cannot
+// prevent the request; the guard has to be in the request itself.
+const realFetch = globalThis.fetch;
+let seen = [];
+globalThis.fetch = (url, init) => {
+  seen.push([String(url), init?.method]);
+  return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: 7 }) });
+};
+
+const standalone = await bundle('src/lib/api.ts', 'standalone');
+check('a build without VITE_API_URL reports the API disabled',
+  standalone.API_ENABLED === false && standalone.api.enabled === false);
+check('standalone api.create resolves to null instead of throwing',
+  (await standalone.api.create('employees', { id: 1 })) === null);
+await standalone.api.bootstrap();
+standalone.syncWrite(standalone.api.update('employees', 1, { salary: 1 }));
+standalone.syncWrite(standalone.api.remove('shift-assignments', 1));
+await new Promise(r => setTimeout(r, 20));
+check('standalone mode issues no fetch at all', seen.length === 0, seen.map(x => x[0]));
+
+seen = [];
+const headcount = s().employees.length;
+s().addEmployee({
+  firstName: 'No', lastName: 'Network', jobNumber: 'NONET-1', unitId: 1, position: 'SN',
+  contactEmail: 'nonet@aigh.sa', contractStart: '2028-01-01', contractEnd: '2029-01-01',
+});
+await new Promise(r => setTimeout(r, 20));
+check('the store write path still works with no backend', s().employees.length === headcount + 1);
+check('onboarding performs no network I/O in standalone mode', seen.length === 0, seen.map(x => x[0]));
+
+// Configured build: the URL must come from VITE_API_URL, never from "undefined".
+const cfgBuild = await build({
+  entryPoints: [join(root, 'src/lib/api.ts')], bundle: true, format: 'esm', write: false,
+  platform: 'node', define: { 'import.meta.env.VITE_API_URL': '"https://api.example.sa"' },
+});
+const cfgFile = join(dir, 'api_configured.mjs');
+writeFileSync(cfgFile, cfgBuild.outputFiles[0].text);
+const configured = await import(pathToFileURL(cfgFile).href);
+check('a build with VITE_API_URL reports the API enabled', configured.API_ENABLED === true);
+seen = [];
+await configured.api.create('employees', { id: 7 });
+await configured.api.remove('shift-assignments', 3);
+await configured.api.bootstrap();
+check('the request URL is built from VITE_API_URL',
+  seen[0][0] === 'https://api.example.sa/api/employees', seen[0][0]);
+check('no request URL contains "undefined"', seen.every(([u]) => !u.includes('undefined')), seen.map(x => x[0]));
+check('create POSTs, remove DELETEs, bootstrap GETs',
+  seen[0][1] === 'POST' && seen[1][1] === 'DELETE' && seen[2][1] === undefined, seen);
+
+// A failing backend must stay a console warning. syncWrite attaches its handler
+// unconditionally, so a rejected write cannot become an unhandled rejection —
+// which under Node would terminate the process, as the original bug did.
+globalThis.fetch = () => Promise.reject(new Error('network down'));
+const realWarn = console.warn;
+let warnings = 0;
+console.warn = () => { warnings++; };
+configured.syncWrite(configured.api.update('employees', 1, { salary: 2 }));
+configured.syncWrite(configured.api.remove('contracts', 1));
+await new Promise(r => setTimeout(r, 20));
+console.warn = realWarn;
+check('a failing backend write is swallowed as a warning, not an unhandled rejection',
+  warnings === 2, warnings);
+globalThis.fetch = realFetch;
+
+console.log('\n[18] The v2 migration refreshes demo rows without destroying real ones');
+// A session persisted at v1 holds the old all-Active demo contracts. Refreshing
+// those must not cost HR the contracts they created or amended since — the
+// migration identifies demo rows by identity, not by replacing the array.
+mem.set('aigh-workforce-storage', JSON.stringify({
+  version: 1,
+  state: {
+    employees: [{ id: 1, name: 'Sarah Ahmed Al-Harbi', jobNumber: '1001', fileNo: '1001', jobTitle: 'Registered Nurse' }],
+    contracts: [
+      { id: 1, employeeId: 1, startDate: '2023-01-15', endDate: '2026-01-14', status: 'Active' },   // untouched demo row
+      { id: 2, employeeId: 2, startDate: '2022-06-01', endDate: '2026-05-31', status: 'Terminated' }, // demo row HR terminated
+      { id: 900, employeeId: 3, startDate: '2027-01-01', endDate: '2029-12-31', status: 'Approved' }, // HR-created
+      { id: 901, employeeId: 4, startDate: '2026-02-01', endDate: '2028-01-31', status: 'Active' },   // HR-created and activated
+    ],
+  },
+}));
+const migratedV2 = await bundle('src/lib/store.tsx', 'migratedv2');
+for (let i = 0; i < 20 && migratedV2.useStore.persist && !migratedV2.useStore.persist.hasHydrated(); i++) {
+  await new Promise(r => setTimeout(r, 5));
+}
+const v2Contracts = migratedV2.useStore.getState().contracts;
+const v2ById = (id) => v2Contracts.find(c => c.id === id);
+check('an untouched demo row adopts the current seeded status', v2ById(1)?.status === 'Expired', v2ById(1)?.status);
+check('a demo row HR had terminated is left exactly as HR left it', v2ById(2)?.status === 'Terminated', v2ById(2)?.status);
+check('a contract HR created survives the migration',
+  v2ById(900)?.status === 'Approved' && v2ById(900)?.endDate === '2029-12-31', v2ById(900));
+check('a contract HR created AND activated is not mistaken for a demo row',
+  v2ById(901)?.status === 'Active' && v2ById(901)?.startDate === '2026-02-01', v2ById(901));
+check('the migration neither adds nor drops contract rows', v2Contracts.length === 4, v2Contracts.length);
+
+console.log('\n[19] Nothing is left dangling');
+await new Promise(r => setTimeout(r, 50));
+check('the run produced no unhandled promise rejections', unhandled.length === 0, unhandled);
+
+// [20] runs after the dangling check on purpose: it is entirely synchronous
+// (file reads and comparisons), so it cannot introduce a rejection that [19]
+// would have missed. Renumbering [19] instead would contradict
+// ANALYSIS_2026-09-20.md, which cites these sections by number.
+console.log('\n[20] The two seeds cannot drift apart again');
+// server/prisma/seed-data.json is generated from app/src/data/seed.ts by
+// scripts/export-seed-data.mjs, and server/prisma/seed.ts consumes it. Until
+// 2026-09-21 the server seed kept its own inline copy, which had drifted: all
+// eight contracts said 'Active' although six had lapsed (so an API-connected app
+// painted them green "Active" beside a grey "No coverage" tag, and called them
+// both covered and renewable); five credential templates were reduced to
+// fields: [], dropping the issue/expiry definitions credential tracking needs;
+// and em/en dashes had been flattened to hyphens. Nothing caught any of it.
+const snapshotPath = join(root, '../server/prisma/seed-data.json');
+const serverSeedPath = join(root, '../server/prisma/seed.ts');
+const { buildSeedData, serialiseSeedData, SHARED_COLLECTIONS } = await import('./export-seed-data.mjs');
+check('the generated snapshot is committed', existsSync(snapshotPath), snapshotPath);
+const committed = existsSync(snapshotPath) ? readFileSync(snapshotPath, 'utf8') : '';
+const fresh = serialiseSeedData(buildSeedData());
+check('the snapshot matches app/src/data/seed.ts byte for byte', committed === fresh,
+  'stale — regenerate with: (cd app && node scripts/export-seed-data.mjs)');
+
+const data = committed ? JSON.parse(committed) : {};
+check('every shared collection survived the round trip',
+  Object.keys(SHARED_COLLECTIONS).every(k => Array.isArray(data[k]) && data[k].length > 0),
+  Object.keys(data).filter(k => !k.startsWith('_')));
+check('the 47-unit directory baseline is intact', (data.NURSING_UNITS || []).length === 47,
+  (data.NURSING_UNITS || []).length);
+
+// The substance of the original drift, asserted directly rather than via bytes.
+const cById = id => ((data.CONTRACTS || []).find(c => c.id === id) || {});
+check('lapsed demo contracts keep their renewal-intended statuses',
+  cById(1).status === 'Expired' && cById(2).status === 'Suspended' && cById(3).status === 'Terminated'
+  && cById(6).status === 'Superseded' && cById(7).status === 'Expired' && cById(8).status === 'Terminated',
+  (data.CONTRACTS || []).map(c => `${c.id}:${c.status}`).join(' '));
+check('only the two genuinely current contracts are Active',
+  (data.CONTRACTS || []).filter(c => c.status === 'Active').map(c => c.id).join(',') === '4,5',
+  (data.CONTRACTS || []).filter(c => c.status === 'Active').map(c => c.id).join(','));
+const fieldDefs = (data.CREDENTIAL_TEMPLATES || []).reduce((n, t) => n + ((t.fields || []).length), 0);
+check('no credential template lost its field definitions', fieldDefs === 14, fieldDefs);
+const passport = (data.CREDENTIAL_TEMPLATES || []).find(t => t.id === 1) || {};
+check('the passport template still carries its issue/expiry date fields',
+  (passport.fields || []).some(f => f.isIssueDate) && (passport.fields || []).some(f => f.isExpiryDate),
+  (passport.fields || []).map(f => f.key).join(','));
+
+// Guard the consumption side too: a regenerated snapshot is worthless if the
+// server seed stops reading it and re-inlines the rows.
+const serverSeed = existsSync(serverSeedPath) ? readFileSync(serverSeedPath, 'utf8') : '';
+check('server/prisma/seed.ts reads the generated snapshot',
+  serverSeed.includes("from './seed-data.json'"), '');
+check('server/prisma/seed.ts does not re-inline a CONTRACTS literal',
+  !/const\s+CONTRACTS\s*=\s*\[/.test(serverSeed), '');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

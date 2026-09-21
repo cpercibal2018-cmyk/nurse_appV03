@@ -7,9 +7,24 @@ const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || true, credentials: true }));
 app.use(express.json({ limit: '5mb' }));
 
-// Entity registry — url segment -> { delegate, idField, idIsInt }.
+// Entity registry — url segment -> { delegate, idField, idIsInt, readOnly }.
 // One generic set of handlers covers every table so the API stays small.
-const ENTITIES: Record<string, { model: any; idField: string; idIsInt: boolean }> = {
+//
+// `readOnly` carries the reason a collection must never be mutated through this
+// generic router:
+//
+//   audit-entries — §9.1 makes the audit trail append-only and hash-chained. A
+//                   row's hash and previousHash must be computed by
+//                   fn_append_audit_entry inside the transaction that caused the
+//                   event; if a client can POST/PUT/DELETE here it can forge,
+//                   rewrite or erase history and sever the chain undetectably.
+//   notifications — there is no recipient model yet, so nothing could authorise
+//                   a write, and markNotificationRead is per-user by definition.
+//
+// NOTE: readOnly protects an append-only invariant. It is NOT an authorisation
+// model — every route below is still unauthenticated (see the login stub and
+// ANALYSIS_2026-09-21.md §2). Do not read this as access control.
+const ENTITIES: Record<string, { model: any; idField: string; idIsInt: boolean; readOnly?: string }> = {
   departments:            { model: prisma.department,           idField: 'id',   idIsInt: true },
   units:                  { model: prisma.unit,                 idField: 'id',   idIsInt: true },
   positions:              { model: prisma.position,             idField: 'code', idIsInt: false },
@@ -20,11 +35,46 @@ const ENTITIES: Record<string, { model: any; idField: string; idIsInt: boolean }
   'credential-requirements':{ model: prisma.credentialRequirement, idField: 'id', idIsInt: true },
   credentials:            { model: prisma.credential,           idField: 'id',   idIsInt: true },
   'shift-assignments':    { model: prisma.shiftAssignment,      idField: 'id',   idIsInt: true },
-  notifications:          { model: prisma.notification,         idField: 'id',   idIsInt: true },
-  'audit-entries':        { model: prisma.auditEntry,           idField: 'id',   idIsInt: true },
+  notifications:          { model: prisma.notification,         idField: 'id',   idIsInt: true,
+                            readOnly: 'no recipient model exists yet, so no write could be authorised' },
+  'audit-entries':        { model: prisma.auditEntry,           idField: 'id',   idIsInt: true,
+                            readOnly: 'the audit trail is append-only and hash-chained (§9.1); rows are written by fn_append_audit_entry, never by clients' },
 };
 
+// Look the URL segment up as an OWN property. A bare `ENTITIES[req.params.entity]`
+// walks the prototype chain, so `/api/constructor`, `/api/__proto__` and
+// `/api/toString` are all truthy, sail past the unknown-entity guard, and surface
+// as a 500 that leaks internal error text to the caller.
+const entityConfig = (segment: string) =>
+  Object.hasOwn(ENTITIES, segment) ? ENTITIES[segment] : undefined;
+
 const coerceId = (entity: string, raw: string) => ENTITIES[entity].idIsInt ? Number(raw) : raw;
+
+// Never echo `e.message` to a client: Prisma and Express messages can contain
+// SQL, column names, constraint names and row data. Detail goes to the log.
+function serverError(res: express.Response, e: unknown) {
+  console.error('[api] unexpected error:', e);
+  return res.status(500).json({ error: 'Internal server error' });
+}
+
+// Prisma client errors are the caller's fault and stay 4xx. The stable `code`
+// (P2002, P2025, …) is safe to return and is what a client needs to react; the
+// human-readable message is not.
+function writeError(res: express.Response, e: any) {
+  const code = typeof e?.code === 'string' && /^P\d{4}$/.test(e.code) ? e.code : undefined;
+  if (!code) return serverError(res, e);
+  console.warn('[api] rejected write:', code);
+  if (code === 'P2025') return res.status(404).json({ error: 'Record not found', code });
+  if (code === 'P2002') return res.status(409).json({ error: 'Duplicate value for a unique field', code });
+  if (code === 'P2003') return res.status(409).json({ error: 'Related record does not exist', code });
+  return res.status(400).json({ error: 'Invalid request', code });
+}
+
+// 405 with an accurate Allow header, so a client can tell "you may not write
+// this" apart from "this collection does not exist".
+function refuseWrite(res: express.Response, entity: string, reason: string) {
+  return res.status(405).set('Allow', 'GET').json({ error: `${entity} is read-only`, reason });
+}
 
 app.get('/api/health', async (_req, res) => {
   try { await prisma.$queryRaw`SELECT 1`; res.json({ status: 'ok', db: 'up' }); }
@@ -52,39 +102,43 @@ app.get('/api/bootstrap', async (_req, res) => {
         prisma.shiftAssignment.findMany(), prisma.notification.findMany(), prisma.auditEntry.findMany(),
       ]);
     res.json({ departments, units, positions, employees, contracts, credentialCategories, credentialTemplates, credentialRequirements, credentials, shiftAssignments, notifications, auditEntries });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e) { serverError(res, e); }
 });
 
-// Generic CRUD for every registered entity.
+// Generic CRUD for every registered entity. Reads are open to any collection in
+// the registry; writes are refused for anything marked readOnly.
 app.get('/api/:entity', async (req, res) => {
-  const cfg = ENTITIES[req.params.entity];
+  const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
-  try { res.json(await cfg.model.findMany()); } catch (e: any) { res.status(500).json({ error: e.message }); }
+  try { res.json(await cfg.model.findMany()); } catch (e) { serverError(res, e); }
 });
 
 app.post('/api/:entity', async (req, res) => {
-  const cfg = ENTITIES[req.params.entity];
+  const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
+  if (cfg.readOnly) return refuseWrite(res, req.params.entity, cfg.readOnly);
   try { res.status(201).json(await cfg.model.create({ data: req.body })); }
-  catch (e: any) { res.status(400).json({ error: e.message }); }
+  catch (e) { writeError(res, e); }
 });
 
 app.put('/api/:entity/:id', async (req, res) => {
-  const cfg = ENTITIES[req.params.entity];
+  const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
+  if (cfg.readOnly) return refuseWrite(res, req.params.entity, cfg.readOnly);
   try {
     const { id, ...data } = req.body;
     res.json(await cfg.model.update({ where: { [cfg.idField]: coerceId(req.params.entity, req.params.id) }, data }));
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+  } catch (e) { writeError(res, e); }
 });
 
 app.delete('/api/:entity/:id', async (req, res) => {
-  const cfg = ENTITIES[req.params.entity];
+  const cfg = entityConfig(req.params.entity);
   if (!cfg) return res.status(404).json({ error: 'Unknown entity' });
+  if (cfg.readOnly) return refuseWrite(res, req.params.entity, cfg.readOnly);
   try {
     await cfg.model.delete({ where: { [cfg.idField]: coerceId(req.params.entity, req.params.id) } });
     res.status(204).end();
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+  } catch (e) { writeError(res, e); }
 });
 
 const port = Number(process.env.PORT) || 3001;

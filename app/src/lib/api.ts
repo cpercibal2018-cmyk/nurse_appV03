@@ -6,6 +6,13 @@ const BASE = (import.meta as any).env?.VITE_API_URL as string | undefined;
 export const API_ENABLED = !!BASE;
 
 async function req(path: string, init?: RequestInit) {
+  // Standalone mode: there is no backend to talk to. Short-circuiting here —
+  // rather than letting `${BASE}${path}` build "undefined/api/…" — is what keeps
+  // the demo from issuing bogus requests and, under Node, from dying on an
+  // unhandled rejection. syncWrite's own guard cannot do this job: JavaScript
+  // evaluates `syncWrite(api.create(…))`'s argument first, so the request is
+  // already in flight by the time syncWrite decides to do nothing.
+  if (!API_ENABLED) return null;
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
@@ -26,6 +33,11 @@ export const api = {
 // Fire-and-forget write with a console warning on failure — keeps the UI
 // optimistic and responsive while still persisting to the database.
 export function syncWrite(p: Promise<any>) {
-  if (!API_ENABLED) return;
-  p.catch((e) => console.warn('[api] write failed (kept local):', e.message));
+  // The handler is attached unconditionally. Returning early when the API is
+  // disabled would leave the promise unhandled, and an unhandled rejection
+  // terminates a Node process (which is how `npm test` used to die) and logs
+  // noise in the browser.
+  p.catch((e) => {
+    if (API_ENABLED) console.warn('[api] write failed (kept local):', e?.message ?? e);
+  });
 }

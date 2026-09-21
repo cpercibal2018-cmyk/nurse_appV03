@@ -1043,10 +1043,26 @@ export const useStore = create<Store>()(
         const migrated: any = { ...persisted, employees: normalizePersistedEmployees(persisted.employees) };
         // v2: seed.ts now spreads contract statuses across the renewal states
         // (Expired / Suspended / Terminated / Superseded + Active). A browser
-        // persisted at v1 still holds the old all-Active contracts and would
-        // silently outrank the seed, so replace them with the current seed.
-        if (version < 2) {
-          migrated.contracts = CONTRACTS_SEED as Contract[];
+        // persisted at v1 still holds the old all-Active demo rows and would
+        // silently outrank the seed, so refresh their status.
+        //
+        // Only untouched demo rows are refreshed. A row is recognised as one of
+        // the old seed rows by its identity (id + employeeId + both dates) and
+        // is rewritten only while it still carries the old seed's 'Active'
+        // status. Contracts HR created, approved, terminated or re-dated
+        // therefore survive the migration instead of being replaced by demo
+        // data — a wholesale `contracts = CONTRACTS_SEED` here would silently
+        // destroy real contract history on the first load after upgrade.
+        if (version < 2 && Array.isArray(persisted.contracts)) {
+          migrated.contracts = persisted.contracts.map((c: any) => {
+            if (c?.status !== 'Active') return c;
+            const seeded = (CONTRACTS_SEED as Contract[]).find((sd) =>
+              sd.id === c.id &&
+              sd.employeeId === c.employeeId &&
+              sd.startDate === c.startDate &&
+              sd.endDate === c.endDate);
+            return seeded ? { ...c, status: seeded.status } : c;
+          });
         }
         return migrated as Store;
       },

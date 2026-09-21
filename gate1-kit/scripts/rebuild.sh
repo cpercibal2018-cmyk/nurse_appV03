@@ -12,9 +12,12 @@
 # do not need to be carried between sessions.
 #
 # NOTE: setup-cluster.sh bakes an absolute path to wal-archive.sh into
-# postgresql.conf, derived from the working directory at setup time. This
-# script therefore cd's to the kit root first; run it from anywhere, but do not
-# move the kit afterwards without rebuilding.
+# postgresql.conf, derived from that script's own location (BASH_SOURCE) rather
+# than from the caller's working directory, so the archive_command stays correct
+# no matter where the cluster is set up from. This script still cd's to the kit
+# root because it invokes its siblings as `bash scripts/...`. The kit must still
+# not be moved after a cluster is built without rebuilding: the path baked into
+# postgresql.conf points at where the kit was at setup time.
 
 set -euo pipefail
 
@@ -54,10 +57,56 @@ if [ "${1:-}" = "--clean" ]; then
       echo "  stopped cluster at ${d}"
     fi
   done
-  rm -rf "${ROOT}/pgdata" "${ROOT}/sock" "${ROOT}/backup" \
-         "${ROOT}/gpg-backup" "${ROOT}/gpg-restore" "${ROOT}/backup.pub" \
-         "${ROOT}/backup.log" "${ROOT}/postgres.log" "${ROOT}/gate1-evidence.md" \
-         "${RESTORE_PARENT}"
+  # The lock file lives inside ${BACKUP_STORAGE_PATH}, which this block deletes — and
+  # deleting a lock file does NOT release it. The holder keeps the inode while the next
+  # run locks a brand-new file, so mutual exclusion silently disappears with both runs
+  # proceeding. ${RESTORE_PARENT} is wiped here too, i.e. the decrypted working files of
+  # any restore in flight. So the wipe takes the lock itself, and refuses if it is held.
+  #
+  # Scoped, and released before the sub-scripts below run: nightly-backup.sh and
+  # restore-database.sh (via pitr-proof.sh) each take the same lock, so a lock still held
+  # here would make them refuse and this script would deadlock on its own children.
+  CLEAN_LOCK="${GATE1_LOCK_FILE:-${BACKUP_STORAGE_PATH}/.gate1.lock}"
+  mkdir -p "$(dirname "${CLEAN_LOCK}")"
+  wipe_regenerable_state() {
+    # The lock file itself must SURVIVE this wipe. Unlinking a lock you are holding does not
+    # release it — it moves the hole *inside* the critical section: this process keeps the old
+    # inode, while any run starting from here on opens a FRESH file at that path and acquires
+    # it immediately. A nightly-backup.sh cron tick landing mid-wipe would therefore sail past
+    # the lock and start writing and pruning the backup set while this wipe is still deleting
+    # it. So delete the CONTENTS of the backup tree, sparing the lock, instead of the tree.
+    # The directory stays behind (setup-cluster.sh recreates full/ and wal/ under it), and a
+    # custom GATE1_LOCK_FILE living elsewhere simply matches nothing here and is never at risk.
+    if [ -d "${ROOT}/backup" ]; then
+      # The sparing match has to be LITERAL. `-path` and `-name` compare GLOB patterns, so a
+      # ${ROOT} containing [ ] * or ? makes the pattern miss the real lock file and delete it —
+      # reopening this hole from inside the critical section (same family as the `for f in
+      # $(ls -1 …)` bug that broke on a storage path containing a space). `-samefile` compares
+      # inodes instead. It also errors out and deletes NOTHING when its argument is missing, and
+      # in the fail-open branch below the lock file was never created — only the flock subshell's
+      # `8>` redirection creates it — so guard on existence rather than let find fail the run.
+      if [ -e "${CLEAN_LOCK}" ]; then
+        find "${ROOT}/backup" -mindepth 1 -maxdepth 1 ! -samefile "${CLEAN_LOCK}" -exec rm -rf {} +
+      else
+        find "${ROOT}/backup" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      fi
+    fi
+    rm -rf "${ROOT}/pgdata" "${ROOT}/sock" \
+           "${ROOT}/gpg-backup" "${ROOT}/gpg-restore" "${ROOT}/backup.pub" \
+           "${ROOT}/backup.log" "${ROOT}/postgres.log" "${ROOT}/gate1-evidence.md" \
+           "${RESTORE_PARENT}"
+  }
+  if command -v flock >/dev/null 2>&1; then
+    (
+      flock --nonblock 8 || {
+        echo "ERROR: another gate1-kit run holds ${CLEAN_LOCK} — refusing --clean, which would delete that run's backups and working files" >&2
+        exit 1; }
+      wipe_regenerable_state
+    ) 8>"${CLEAN_LOCK}"
+  else
+    echo "WARNING: flock(1) not found — --clean proceeds WITHOUT mutual exclusion" >&2
+    wipe_regenerable_state
+  fi
   echo "  removed regenerable state (cluster data, backups, keyrings)"
 else
   # Even without --clean, a stale restore instance would hold the socket dir.

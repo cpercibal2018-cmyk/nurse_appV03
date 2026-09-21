@@ -40,8 +40,13 @@ Set these once. `<ROOT>` is the sandbox root (e.g. `/home/user/gate1-drill`).
 | `BACKUP_LOG_FILE` | recommended | Append-only log for backup, archive and restore events |
 | `GNUPGHOME` | yes (backup host) | Keyring holding the **public** key only |
 | `BACKUP_GPG_HOME` | yes (restore host) | Keyring holding the **private** key |
-| `RESTORE_PARENT` | yes (restore) | Restore root; `pgdata/`, `sock/`, `unpack/` created beneath it |
+| `RESTORE_PARENT` | yes (restore) | Restore root; `pgdata/`, `sock/` and a **transient** `unpack/` created beneath it. `unpack/` holds the decrypted archive and is removed by an `EXIT` trap on every path, so it does not outlive the run |
 | `RESTORE_PORT` | yes (restore) | Port for the recovery instance — must differ from the source |
+| `ALLOW_UNVERIFIED_BACKUP` | no (default unset) | Escape hatch for `restore-database.sh` only: set to `1` to restore a base backup whose `.meta.json` is missing. Without it the script **fails closed**, because on a recovery path "cannot verify" must not silently mean "assume fine". Logged loudly; never script it into a drill |
+| `BACKUP_RETENTION_DAYS` | no (default 30) | Age in days after which a base backup is pruned. The **newest** backup is never pruned, whatever this is set to: a misconfigured `0`, or a job broken for longer than the threshold, must not be able to delete the last restorable backup. A sidecar is only ever removed together with the archive it describes |
+| `WAL_RETENTION_ENABLED` | no (default 1) | Set to `0` to skip WAL pruning entirely. Pruning is **base-backup-aware**: it removes archived segments strictly before the `wal_start_segment` of the *oldest retained* base backup, and nothing else. If that floor is unknown it prunes nothing and says so — it never guesses |
+| `WAL_PRUNE_DRY_RUN` | no (default 0) | Set to `1` to log exactly which segments pruning would remove, and remove none |
+| `GATE1_LOCK_FILE` | no (default `${BACKUP_STORAGE_PATH}/.gate1.lock`) | `flock(1)` file shared by `nightly-backup.sh`, `restore-database.sh` and `rebuild.sh --clean` (which wipes the directory this file lives in, sparing the file itself), so a backup cannot prune the archive out from under a restore that is already replaying it. A run that cannot get the lock is **refused** (exit 1), not queued. If `flock(1)` is absent both warn and proceed unlocked — no backup is worse than an unlocked one |
 | `RTO_MINUTES` | no (default 240) | RTO budget asserted by the drill |
 | `EVIDENCE_FILE` | no (default `gate1-evidence.md`) | Where the evidence record is written |
 | `EXPECTED_EMPLOYEES` | no | Source row count to compare against after restore |
@@ -170,6 +175,7 @@ Every one of these was invisible on paper and only surfaced on execution.
 | 9 | A restore instance from a previous run was not stopped before its data directory was deleted | The old postmaster logged `data directory lock file is invalid` and died messily, leaving the port possibly bound and breaking the *next* restore for reasons that look unrelated | Stop any instance found in the restore directory before wiping it |
 | 10 | `SHOW archive_timeout` returns `5min`, not an integer | Every numeric comparison against the bound failed with `integer expression expected` | Read `pg_settings` and convert the unit |
 | 11 | A stalled archiver surfaced only as a 420 s mystery timeout | Slow, confusing diagnosis | Fail-fast preflight: force one switch, wait 60 s, print `last_archived_wal` / `last_failed_wal` / `failed_count` on failure |
+| 12 | **`archive_command` / `restore_command` pointed at `${PWD}/scripts/…` and executed the script directly** | Two independent failures on the same generated line. (a) `${PWD}` is expanded by *setup-cluster.sh*, not by postgres, so what got baked into `postgresql.conf` was whatever directory the operator happened to be standing in — `rebuild.sh` had to `cd` to the kit root merely to make archiving work at all. (b) PostgreSQL runs both commands through `/bin/sh`, which requires the executable bit; the scripts were committed `100644`, so from a fresh `git clone` **every** archive and every replay attempt failed with `Permission denied` (reproduced: `sh -c` on a 644 copy → exit 126) while postgres still reported itself healthy — defect 7's silent-RPO-loss failure mode, reintroduced by a different route, and invisible to every drill that ran from a working copy which still had the bit | Derive `SCRIPTS_DIR` from `BASH_SOURCE` exactly as `failure-drill.sh` / `rebuild.sh` already did for `KIT_DIR`; invoke through `bash "…"` so the executable bit becomes irrelevant to recovery; commit the scripts `100755` |
 
 Defect 4 is the instructive one: the pipeline was working the entire time. The
 drill reported failure because the **harness** was broken, not the backup. That
@@ -189,11 +195,11 @@ self-reported exit code.
 | `scripts/setup-cluster.sh` | `initdb`, cluster config, schema and data load |
 | `scripts/wal-archive.sh` | `archive_command` — encrypt then store; refuses to archive an unencrypted file |
 | `scripts/wal-restore.sh` | `restore_command` — decrypt; returns non-zero **without** creating `%p` when a segment is missing |
-| `scripts/nightly-backup.sh` | Encrypted, checksummed base backup + metadata sidecar |
-| `scripts/restore-database.sh` | Decrypt, unpack, configure recovery, promote |
+| `scripts/nightly-backup.sh` | Encrypted base backup + metadata sidecar; envelope-checked, then the recorded SHA-256 is **read back off storage** before the plaintext is deleted. Also records the backup's own WAL start segment (from `backup_label`, while the plaintext still exists), prunes expired backups **without ever removing the newest**, and prunes `wal/` back to the oldest retained backup's floor. Holds `GATE1_LOCK_FILE` |
+| `scripts/restore-database.sh` | Verify the recorded SHA-256, *then* decrypt, unpack, configure recovery, promote; removes the decrypted `unpack/` on every exit path. Takes `GATE1_LOCK_FILE` first, so a backup cannot prune the archive out from under a restore in progress — and a **refused** run is a no-op: it disarms that cleanup trap before exiting, so it cannot delete the `unpack/` of the run that holds the lock |
 | `scripts/restore-drill.sh` | Timed restore + verification + evidence record |
 | `scripts/pitr-proof.sh` | Provable PITR driver (recommended entry point) |
-| `scripts/rebuild.sh` | One-command cold rebuild (`--clean` for a clean slate) |
+| `scripts/rebuild.sh` | One-command cold rebuild. `--clean` wipes the regenerable state — including the contents of `${BACKUP_STORAGE_PATH}`, where `GATE1_LOCK_FILE` lives — so the wipe takes that lock for its own duration, is refused if held, **never unlinks the lock file itself** (spared by inode, not by name), and releases the lock before the sub-scripts run |
 | `scripts/failure-drill.sh` | Crash durability + measured RPO (`--crash`, `--rpo`, `--all`) |
 | `sql/40_tx_probe.sql` | Probe table for client-confirmed transactions |
 
@@ -208,6 +214,16 @@ scripts, the encrypted backup set (~6 MB), the keyrings and the evidence record
 — about 8 MB in total — and `scripts/rebuild.sh --clean` recreates the rest in
 seconds. Keeping it small also avoids silently losing files to a workspace
 snapshot size limit, which is a real hazard at 300 MB.
+
+`wal/` used to be the exception to "regenerable by design": nothing ever pruned it, so
+it grew for as long as the cluster ran — with `archive_timeout=300`, up to ~4.6 GB/day
+of timeout-forced segments alone, with no ceiling. A full archive volume makes
+`archive_command` fail, PostgreSQL then retains WAL in `pg_wal` on the primary, *that*
+fills, and the primary stops accepting writes. `nightly-backup.sh` step 7 now bounds it:
+segments strictly before the oldest retained backup's `wal_start_segment` are removed,
+segments from it forward are kept, and `*.history`, `*.backup` and any in-flight
+`*.gpg.tmp.<pid>` are never touched. `GATE1_LOCK_FILE` is a zero-byte file created
+beside `full/` and `wal/`.
 
 After a run, free the bulk with:
 
@@ -275,5 +291,29 @@ cd /home/user/gate1-kit && bash scripts/failure-drill.sh --all  # expect "Failur
 ```
 
 The drill is idempotent: it clears marker rows from previous runs, and
-`restore-database.sh` drops and rebuilds the restore cluster each time. The
-source cluster is never modified except for the explicitly-labelled marker rows.
+`restore-database.sh` drops and rebuilds the restore cluster each time — but only
+*after* the backup's recorded SHA-256 has verified against the object in storage, so a
+corrupt or truncated backup costs one failed attempt rather than the previous restore
+tree. The source cluster is never modified except for the explicitly-labelled marker rows.
+
+A run is also **exclusive**: `nightly-backup.sh` and `restore-database.sh` take
+`GATE1_LOCK_FILE` and refuse (exit 1) rather than queue if another kit run holds it, so
+a backup cannot apply retention and prune `wal/` while a restore is replaying from it.
+`rebuild.sh --clean` takes the same lock for the duration of its wipe, because that wipe
+deletes the directory the lock file lives in — and deleting a lock file does not release
+it, so an unlocked wipe would leave the holder holding a stale inode while the next run
+locked a fresh file, with exclusion silently gone. For the same reason the wipe deletes the
+*contents* of the backup tree and **spares the lock file**: a holder that unlinks its own
+lock re-opens that hole from inside the critical section, because every later run then
+creates and acquires a brand-new inode at the same path. The lock file is identified **by
+inode** (`find -samefile`), not by name — `-path` and `-name` are *glob* patterns, so a
+storage path containing `[`, `]`, `*` or `?` would silently stop matching it. And since
+`-samefile` errors out when its argument is missing, which is exactly the state when
+`flock(1)` is absent and nothing ever created the lock file, that match is guarded on the
+file existing so the fail-open path still wipes the whole tree. A **refused** run is always a no-op:
+`restore-database.sh` disarms its `unpack/` cleanup trap before refusing, since leaving it
+armed would delete the working directory of the run that holds the lock.
+Each backup run prunes `wal/` back to the oldest *retained* backup's WAL start segment,
+which means the archive is bounded by `BACKUP_RETENTION_DAYS` rather than growing for as
+long as the cluster runs. To see what a given run would prune without pruning it, set
+`WAL_PRUNE_DRY_RUN=1` and read the log.

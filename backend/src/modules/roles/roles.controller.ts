@@ -127,7 +127,11 @@ export class RolesController {
       // Re-execute original grant payload in same transaction
       const original = await tx.adminApprovalRequest.findUnique({ where: { id: requestId } });
       const payload = original?.payload as any;
-      if (!payload) throw new Error('Payload missing');
+      // `|| !original` is redundant at runtime — a null `original` already yields an
+      // undefined payload — but the `as any` cast above erases the narrowing, so the
+      // explicit check is what lets strictNullChecks see that `original.initiatorId`
+      // below is safe. Do not "simplify" it away.
+      if (!payload || !original) throw new Error('Payload missing');
 
       // Check duplicate again inside tx
       const dup = await tx.userRoleAssignment.findFirst({

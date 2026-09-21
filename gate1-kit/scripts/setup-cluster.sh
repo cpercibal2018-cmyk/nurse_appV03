@@ -8,6 +8,13 @@
 
 set -euo pipefail
 
+# Absolute path to this script's own directory. `${PWD}` cannot be used for the
+# archive_command written below: that string lands in postgresql.conf and is read
+# back by the postmaster — possibly long after setup-cluster.sh finished, and from
+# a working directory nobody controls. failure-drill.sh and rebuild.sh already
+# derive KIT_DIR the same way.
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT="${1:?usage: setup-cluster.sh <sandbox_root>}"
 PGBIN="${PGBIN:-/usr/lib/postgresql/15/bin}"
 PGDATA="${ROOT}/pgdata"
@@ -53,7 +60,18 @@ archive_timeout = 300
 # otherwise fail EVERY archive attempt while still reporting itself healthy as
 # a database. The RPO guarantee would quietly become unbounded and nobody would
 # notice until the day a restore was actually needed.
-archive_command = 'BACKUP_STORAGE_PATH=${ROOT}/backup BACKUP_ENCRYPTION_KEY_PATH=${ROOT}/backup.pub GNUPGHOME=${ROOT}/gpg-backup BACKUP_LOG_FILE=${ROOT}/backup.log ${PWD}/scripts/wal-archive.sh %p %f'
+#
+# Two further consequences of the same rule:
+#   * the script path is ${SCRIPTS_DIR}, not ${PWD} — an absolute path derived
+#     from this file's own location, so it is still correct when the postmaster
+#     reads it back from any directory;
+#   * it is invoked as `bash "…"`, not executed directly. PostgreSQL runs
+#     archive_command through /bin/sh, which needs the executable bit; the kit's
+#     scripts are committed 100644, so a fresh clone would otherwise fail EVERY
+#     archive attempt with "Permission denied" while postgres still reported
+#     itself healthy. Going through bash is immune to the bit being lost in a
+#     clone, a zip, or a copy to a filesystem that does not carry modes.
+archive_command = 'BACKUP_STORAGE_PATH=${ROOT}/backup BACKUP_ENCRYPTION_KEY_PATH=${ROOT}/backup.pub GNUPGHOME=${ROOT}/gpg-backup BACKUP_LOG_FILE=${ROOT}/backup.log bash "${SCRIPTS_DIR}/wal-archive.sh" %p %f'
 max_wal_senders = 3
 wal_keep_size = 64MB
 fsync = on

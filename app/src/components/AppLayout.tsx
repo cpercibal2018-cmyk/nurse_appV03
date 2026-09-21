@@ -85,7 +85,21 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   const menuItems = [
-    { key: '/contracts', icon: <FileProtectOutlined />, label: <NavLink to="/contracts">Contracts</NavLink> },
+    { key: '/', icon: <DashboardOutlined />, label: <NavLink to="/">{t('dashboard')}</NavLink> },
+    { key: '/workforce', icon: <TeamOutlined />, label: <NavLink to="/workforce">{t('workforce')}</NavLink> },
+    { key: '/contracts', icon: <FileProtectOutlined />, label: <NavLink to="/contracts">Contracts (Job No from Contract)</NavLink> },
+    { key: '/units', icon: <ApartmentOutlined />, label: <NavLink to="/units">{t('units')}</NavLink> },
+    { key: '/positions', icon: <IdcardOutlined />, label: <NavLink to="/positions">{t('positions')}</NavLink> },
+    { key: '/credentials', icon: <SafetyCertificateOutlined />, label: <NavLink to="/credentials">{t('credentials')}</NavLink> },
+    { key: '/my-credentials', icon: <IdcardOutlined />, label: <NavLink to="/my-credentials">My Credentials</NavLink> },
+    { key: '/eligibility', icon: <CheckCircleOutlined />, label: <NavLink to="/eligibility">{t('eligibility')}</NavLink> },
+    { key: '/scheduling', icon: <ScheduleOutlined />, label: <NavLink to="/scheduling">{t('scheduling')}</NavLink> },
+    { key: '/notifications', icon: <BellOutlined />, label: <NavLink to="/notifications">{t('notifications')}</NavLink> },
+    { key: '/audit', icon: <AuditOutlined />, label: <NavLink to="/audit">{t('audit')}</NavLink> },
+    { key: '/observability', icon: <HeartOutlined />, label: <NavLink to="/observability">{t('observability')}</NavLink> },
+    { key: '/kpi', icon: <FundOutlined />, label: <NavLink to="/kpi">Nursing KPIs</NavLink> },
+    { key: '/roles', icon: <SafetyCertificateOutlined />, label: <NavLink to="/roles">Roles & Matrix</NavLink> },
+    { key: '/admin', icon: <SettingOutlined />, label: <NavLink to="/admin">{t('admin')}</NavLink> },
   ];
 
   const userMenu = {

@@ -9,10 +9,11 @@ const prisma = new PrismaClient();
 // Change or remove these before any non-demo deployment.
 const DEMO_PASSWORD = 'demo1234';
 const USERS = [
-  { email: 'hr.admin@aigh.sa',   name: 'HR Admin',           role: 'HR_ADMIN' },
-  { email: 'admin@aigh.sa',      name: 'System Admin',       role: 'SYSTEM_ADMIN' },
-  { email: 'supervisor@aigh.sa', name: 'Ward Supervisor',    role: 'SUPERVISOR' },
-  { email: 'nurse@aigh.sa',      name: 'Staff Nurse',        role: 'EMPLOYEE' },
+  { email: 'developer@aigh.sa', name: 'Developer',        role: 'DEVELOPER' },
+  { email: 'hr.admin@aigh.sa',   name: 'HR Admin',        role: 'HR_ADMIN' },
+  { email: 'admin@aigh.sa',      name: 'System Admin',    role: 'SYSTEM_ADMIN' },
+  { email: 'supervisor@aigh.sa', name: 'Ward Supervisor', role: 'SUPERVISOR' },
+  { email: 'nurse@aigh.sa',      name: 'Staff Nurse',     role: 'EMPLOYEE' },
 ];
 
 // ---------------------------------------------------------------------------

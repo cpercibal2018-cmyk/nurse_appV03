@@ -58,6 +58,7 @@ export default function LoginPage() {
         <Divider>Demo Accounts (any password works)</Divider>
 
         <Space direction="vertical" style={{ width: '100%' }} size="small">
+          <Space><Tag color="purple">DEVELOPER</Tag><Text code>developer@aigh.sa</Text><Text type="secondary">Full access — development/testing</Text></Space>
           <Space><Tag color="red">SYSTEM_ADMIN</Tag><Text code>admin@aigh.sa</Text><Text type="secondary">Full access, PAM, break-glass</Text></Space>
           <Space><Tag color="blue">HR_ADMIN</Tag><Text code>hr.admin@aigh.sa</Text><Text type="secondary">Onboarding, departments, positions, credentials</Text></Space>
           <Space><Tag color="green">SUPERVISOR</Tag><Text code>supervisor@aigh.sa</Text><Text type="secondary">Scoped read, roster publication, waivers</Text></Space>

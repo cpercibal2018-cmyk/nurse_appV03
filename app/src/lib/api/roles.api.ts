@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useStore } from '../store';
 
 // Types mirroring backend Prisma
-export type AppRole = 'SYSTEM_ADMIN' | 'HR_ADMIN' | 'SUPERVISOR' | 'EMPLOYEE';
+export type AppRole = 'DEVELOPER' | 'SYSTEM_ADMIN' | 'HR_ADMIN' | 'SUPERVISOR' | 'EMPLOYEE';
 export type ScopeType = 'SYSTEM' | 'DEPARTMENT' | 'UNIT';
 
 export interface RoleAssignment {

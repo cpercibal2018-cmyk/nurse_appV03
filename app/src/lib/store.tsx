@@ -329,7 +329,9 @@ export const useStore = create<Store>()(
         // 'hr' must be tested before 'admin': the documented HR demo account is
         // hr.admin@aigh.sa, and testing 'admin' first silently signed it in as
         // SYSTEM_ADMIN, which an HR_ADMIN-only gate then rejects.
-        const role = email.includes('hr') ? 'HR_ADMIN' : email.includes('admin') ? 'SYSTEM_ADMIN' : email.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
+        // 'developer' is checked first so developer@… maps to the full-access
+        // DEVELOPER role rather than matching a later substring.
+        const role = email.includes('developer') ? 'DEVELOPER' : email.includes('hr') ? 'HR_ADMIN' : email.includes('admin') ? 'SYSTEM_ADMIN' : email.includes('supervisor') ? 'SUPERVISOR' : 'EMPLOYEE';
         const user = { id: 1, name: email.split('@')[0], role, email };
         set({ isAuthenticated: true, currentUser: user, csrfToken: Math.random().toString(36).substring(2) });
         get().addAuditEntry({ actorId: 1, action: 'LOGIN', resource: 'auth', resourceId: '1', changes: { email } });
@@ -655,7 +657,7 @@ export const useStore = create<Store>()(
       assignPosition: ({ employeeId, positionCode, reason }) => {
         const state = get();
 
-        if (state.currentUser?.role !== 'HR_ADMIN') {
+        if (state.currentUser?.role !== 'HR_ADMIN' && state.currentUser?.role !== 'DEVELOPER') {
           throw new Error(
             `FORBIDDEN: position assignment is an Employee Master write (spec §8.1) and requires HR_ADMIN — ` +
             `current role is ${state.currentUser?.role ?? 'none (not signed in)'}`
@@ -748,7 +750,7 @@ export const useStore = create<Store>()(
       attachContractCopy: ({ contractId, file }) => {
         const state = get();
 
-        if (state.currentUser?.role !== 'HR_ADMIN') {
+        if (state.currentUser?.role !== 'HR_ADMIN' && state.currentUser?.role !== 'DEVELOPER') {
           throw new Error(
             `FORBIDDEN: contract attachments are HR Admin scoped (spec §4.2) and require HR_ADMIN — ` +
             `current role is ${state.currentUser?.role ?? 'none (not signed in)'}`
@@ -857,7 +859,7 @@ export const useStore = create<Store>()(
         if (!cred) throw new Error(`CREDENTIAL_NOT_FOUND: ${credentialId}`);
 
         const role = state.currentUser?.role;
-        const isAdmin = role === 'HR_ADMIN' || role === 'SYSTEM_ADMIN';
+        const isAdmin = role === 'HR_ADMIN' || role === 'SYSTEM_ADMIN' || role === 'DEVELOPER';
         const isOwner = role === 'EMPLOYEE' && cred.employeeId === state.currentUser?.id;
         if (!isAdmin && !isOwner) {
           throw new Error(`FORBIDDEN: uploading credential evidence requires HR_ADMIN/SYSTEM_ADMIN, or the owning employee — current role is ${role ?? 'none (not signed in)'}`);

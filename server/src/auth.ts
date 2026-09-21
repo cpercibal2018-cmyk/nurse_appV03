@@ -113,8 +113,9 @@ export function requireRole(...roles: string[]) {
   };
 }
 
-/** Roles allowed to mutate data through the generic CRUD routes. */
-export const WRITE_ROLES = ['HR_ADMIN', 'SYSTEM_ADMIN'];
+/** Roles allowed to mutate data through the generic CRUD routes. DEVELOPER is a
+ *  full-access role for development/testing. */
+export const WRITE_ROLES = ['HR_ADMIN', 'SYSTEM_ADMIN', 'DEVELOPER'];
 
 // ── Refresh tokens & CSRF (stage 2) ─────────────────────────────────────────
 

@@ -3,6 +3,7 @@ import { Card, Table, Button, Tag, Space, Input, Select, Modal, Form, message, T
 import { PlusOutlined, SearchOutlined, TeamOutlined, EyeOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useStore } from '../../lib/store';
 import { toHijri, toHijriShort, toHijriIso } from '../../lib/hijri';
+import { providesCoverage, localIsoDate } from '../../lib/contracts';
 import { UNASSIGNED_UNIT_ID, DEFAULT_ONBOARD_POSITION } from '../../data/seed';
 
 const { Title, Text } = Typography;
@@ -132,7 +133,8 @@ export default function WorkforcePage() {
     {
       title: 'Contract Start (Greg + Hijri)', key: 'contractStart', width: 180,
       render: (_: any, r: any) => {
-        const c = contracts.find(cc => cc.employeeId === r.id && (cc.status === 'Active' || cc.status === 'Approved'));
+        const todayIso = localIsoDate();
+        const c = contracts.find(cc => cc.employeeId === r.id && providesCoverage(cc.status) && cc.endDate >= todayIso);
         if (!c) return <Tag color="red">No coverage</Tag>;
         return <><Text style={{ fontSize: 11 }}>{c.startDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{c.startDateHijri || toHijriShort(c.startDate)} هـ</Text></>;
       }
@@ -140,7 +142,8 @@ export default function WorkforcePage() {
     {
       title: 'Contract End (Greg + Hijri)', key: 'contractEnd', width: 180,
       render: (_: any, r: any) => {
-        const c = contracts.find(cc => cc.employeeId === r.id && (cc.status === 'Active' || cc.status === 'Approved'));
+        const todayIso = localIsoDate();
+        const c = contracts.find(cc => cc.employeeId === r.id && providesCoverage(cc.status) && cc.endDate >= todayIso);
         if (!c) return '-';
         return <><Text style={{ fontSize: 11 }}>{c.endDate}</Text><br /><Text style={{ fontSize: 10 }} type="secondary">{c.endDateHijri || toHijriShort(c.endDate)} هـ</Text></>;
       }

@@ -11,7 +11,21 @@ import {
 
 const prisma = new PrismaClient();
 const app = express();
-app.use(cors({ origin: process.env.CORS_ORIGIN || true, credentials: true }));
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors({
+  origin: corsOrigin
+    ? corsOrigin
+    : (origin, callback) => {
+        // When CORS_ORIGIN is not set: allow requests without an Origin (e.g. curl, mobile, server-to-server)
+        // or during development. Reject arbitrary origins in production.
+        if (!origin || !process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+          callback(null, true);
+        } else {
+          callback(new Error('CORS origin not allowed'));
+        }
+      },
+  credentials: true,
+}));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
 

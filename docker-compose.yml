@@ -32,6 +32,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/nurseapp
       PORT: "3001"
       CORS_ORIGIN: http://localhost:5173
+      JWT_SECRET: aigh_local_dev_compose_jwt_secret_min_32_chars_long
     ports:
       - "3001:3001"
     depends_on:

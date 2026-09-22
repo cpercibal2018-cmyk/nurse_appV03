@@ -317,3 +317,23 @@ Each backup run prunes `wal/` back to the oldest *retained* backup's WAL start s
 which means the archive is bounded by `BACKUP_RETENTION_DAYS` rather than growing for as
 long as the cluster runs. To see what a given run would prune without pruning it, set
 `WAL_PRUNE_DRY_RUN=1` and read the log.
+
+---
+
+## 8. Automated Scheduling (systemd timer / cron)
+
+To run `nightly-backup.sh` automatically every night at 02:00 (Asia/Riyadh time),
+systemd unit files are provided in `gate1-kit/systemd/`:
+
+```bash
+# Install and enable the systemd timer:
+sudo cp gate1-kit/systemd/aigh-backup.service /etc/systemd/system/
+sudo cp gate1-kit/systemd/aigh-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aigh-backup.timer
+
+# Verify the schedule:
+systemctl list-timers aigh-backup.timer
+```
+
+For environments using traditional cron, see `gate1-kit/systemd/crontab.example`.

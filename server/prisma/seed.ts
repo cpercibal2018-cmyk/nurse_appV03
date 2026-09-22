@@ -14,6 +14,7 @@ const USERS = [
   { email: 'admin@aigh.sa',      name: 'System Admin',    role: 'SYSTEM_ADMIN' },
   { email: 'supervisor@aigh.sa', name: 'Ward Supervisor', role: 'SUPERVISOR' },
   { email: 'nurse@aigh.sa',      name: 'Staff Nurse',     role: 'EMPLOYEE' },
+  { email: 'employee@aigh.sa',   name: 'Employee',        role: 'EMPLOYEE' },
 ];
 
 // ---------------------------------------------------------------------------

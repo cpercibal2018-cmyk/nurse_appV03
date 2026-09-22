@@ -400,37 +400,50 @@ export const useStore = create<Store>()(
       addDepartment: (dept) => set((s) => {
         const newDept = { id: Math.max(0, ...s.departments.map(d => d.id)) + 1, ...dept, isActive: true, createdAt: new Date().toISOString() };
         s.addAuditEntry({ actorId: s.currentUser?.id || 1, action: 'DEPARTMENT_CREATED', resource: 'departments', resourceId: String(newDept.id), changes: dept });
+        syncWrite(api.create('departments', newDept));
         return { departments: [...s.departments, newDept] };
       }),
-      updateDepartment: (id, data) => set((s) => ({
-        departments: s.departments.map(d => d.id === id ? { ...d, ...data } : d)
-      })),
-      deleteDepartment: (id) => set((s) => {
-        const activeUnits = s.units.filter(u => u.departmentId === id && u.isActive).length;
+      updateDepartment: (id, data) => {
+        set((s) => ({
+          departments: s.departments.map(d => d.id === id ? { ...d, ...data } : d)
+        }));
+        syncWrite(api.update('departments', id, data));
+      },
+      deleteDepartment: (id) => {
+        const state = get();
+        const activeUnits = state.units.filter(u => u.departmentId === id && u.isActive).length;
         if (activeUnits > 0) throw new Error(`Cannot delete: ${activeUnits} active unit(s)`);
-        return { departments: s.departments.map(d => d.id === id ? { ...d, isActive: false } : d) };
-      }),
+        set((s) => ({ departments: s.departments.map(d => d.id === id ? { ...d, isActive: false } : d) }));
+        syncWrite(api.update('departments', id, { isActive: false }));
+      },
 
       units: NURSING_UNITS,
       addUnit: (unit) => set((s) => {
         const newUnit = { id: Math.max(0, ...s.units.map(u => u.id)) + 1, ...unit, isActive: true };
         s.addAuditEntry({ actorId: s.currentUser?.id || 1, action: 'UNIT_CREATED', resource: 'nursing_units', resourceId: String(newUnit.id), changes: unit });
+        syncWrite(api.create('units', newUnit));
         return { units: [...s.units, newUnit] };
       }),
-      updateUnit: (id, data) => set((s) => ({
-        units: s.units.map(u => u.id === id ? { ...u, ...data } : u)
-      })),
-      deleteUnit: (id) => set((s) => {
-        const activeEmployees = s.employees.filter(e => e.unitId === id && !e.deletedAt).length;
+      updateUnit: (id, data) => {
+        set((s) => ({
+          units: s.units.map(u => u.id === id ? { ...u, ...data } : u)
+        }));
+        syncWrite(api.update('units', id, data));
+      },
+      deleteUnit: (id) => {
+        const state = get();
+        const activeEmployees = state.employees.filter(e => e.unitId === id && !e.deletedAt).length;
         if (activeEmployees > 0) throw new Error(`Cannot delete: ${activeEmployees} active employee(s)`);
-        return { units: s.units.map(u => u.id === id ? { ...u, isActive: false } : u) };
-      }),
+        set((s) => ({ units: s.units.map(u => u.id === id ? { ...u, isActive: false } : u) }));
+        syncWrite(api.update('units', id, { isActive: false }));
+      },
       updateBedCapacity: (id, bedCount, reason, actorId) => set((s) => {
         const unit = s.units.find(u => u.id === id);
         if (!unit) throw new Error('Unit not found');
         if (bedCount < 0 || bedCount > 500) throw new Error('Bed count must be 0-500');
         const logEntry = { id: s.bedCapacityLog.length + 1, unitId: id, previousCount: unit.bedCount, newCount: bedCount, reason, changedBy: actorId as any, changedAt: new Date().toISOString() };
         s.addAuditEntry({ actorId, action: 'BED_CAPACITY_UPDATED', resource: 'nursing_units', resourceId: String(id), changes: { previous: unit.bedCount, new: bedCount, reason } });
+        syncWrite(api.update('units', id, { bedCount }));
         return {
           units: s.units.map(u => u.id === id ? { ...u, bedCount } : u),
           bedCapacityLog: [...s.bedCapacityLog, logEntry as any]
@@ -468,6 +481,10 @@ export const useStore = create<Store>()(
         }
 
         set({ units: newUnits, bedCapacityLog: newLogs });
+        for (const r of results.filter(r => r.status === 'UPDATED')) {
+          const u = newUnits.find(un => un.code === r.unitCode);
+          if (u) syncWrite(api.update('units', u.id, { bedCount: u.bedCount }));
+        }
         get().addAuditEntry({ actorId, action: 'BED_CAPACITY_BULK_UPDATED', resource: 'nursing_units', resourceId: 'bulk', changes: { updated: results.filter(r => r.status === 'UPDATED').length, reason } });
         return results;
       },
@@ -519,14 +536,19 @@ export const useStore = create<Store>()(
         if (s.positions.find(p => p.code === pos.code)) throw new Error(`Position ${pos.code} already exists`);
         const newPos = { ...pos, isActive: true };
         s.addAuditEntry({ actorId: s.currentUser?.id || 1, action: 'POSITION_CREATED', resource: 'position_directory', resourceId: pos.code, changes: pos });
+        syncWrite(api.create('positions', newPos));
         return { positions: [...s.positions, newPos] };
       }),
-      updatePosition: (code, data) => set((s) => ({
-        positions: s.positions.map(p => p.code === code ? { ...p, ...data } : p)
-      })),
+      updatePosition: (code, data) => {
+        set((s) => ({
+          positions: s.positions.map(p => p.code === code ? { ...p, ...data } : p)
+        }));
+        syncWrite(api.update('positions', code, data));
+      },
       deletePosition: (code) => set((s) => {
         const activeEmployees = s.employees.filter(e => e.position === code && !e.deletedAt).length;
         if (activeEmployees > 0) throw new Error(`Cannot delete: ${activeEmployees} active employee(s) hold this code`);
+        syncWrite(api.update('positions', code, { isActive: false }));
         return { positions: s.positions.map(p => p.code === code ? { ...p, isActive: false } : p) };
       }),
 
@@ -891,12 +913,15 @@ export const useStore = create<Store>()(
           storageKey: `vault/credentials/${credentialId}/v${version}/${file.name}`,
         };
 
+        const updatedEvidence = [...(cred.evidence ?? []), evidence];
+        const nextStatus = cred.validityStatus === 'Valid' ? cred.validityStatus : 'PendingVerification';
         credentialEvidenceBytes.set(id, file.bytes);
         set((s) => ({
           credentials: s.credentials.map(c => c.id === credentialId
-            ? { ...c, evidence: [...(c.evidence ?? []), evidence], validityStatus: c.validityStatus === 'Valid' ? c.validityStatus : 'PendingVerification' }
+            ? { ...c, evidence: updatedEvidence, validityStatus: nextStatus }
             : c),
         }));
+        syncWrite(api.update('credentials', credentialId, { evidence: updatedEvidence, validityStatus: nextStatus }));
         get().addAuditEntry({
           actorId: state.currentUser?.id ?? null,
           action: 'CREDENTIAL_EVIDENCE_ATTACHED',
@@ -983,6 +1008,7 @@ export const useStore = create<Store>()(
             }
           }
           newAssignments[idx] = { ...assignment, status: 'Published' };
+          syncWrite(api.update('shift-assignments', id, { status: 'Published' }));
           success++;
         }
 

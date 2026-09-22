@@ -45,7 +45,7 @@ export default function LoginPage() {
           description="Refresh token HttpOnly Secure SameSite=Lax cookie nurseapp_refresh scoped to /api/v1/auth (not __Host- — requires Path=/). Access token JS variable 15min, CSRF token X-CSRF-Token header, Origin check + custom header defense in depth. Guard order AuthGuard→RbacGuard→CsrfGuard at controller level. XSS cannot steal refresh token. Shared workstations safer — closing tab clears in-memory access token."
         />
 
-        <Form layout="vertical" onFinish={handleLogin} initialValues={{ email: 'hr.admin@aigh.sa', password: 'demo123' }}>
+        <Form layout="vertical" onFinish={handleLogin} initialValues={{ email: 'hr.admin@aigh.sa', password: 'demo1234' }}>
           <Form.Item name="email" label="Email / Username" rules={[{ required: true, message: 'Enter email' }]}>
             <Input prefix={<UserOutlined />} placeholder="hr.admin@aigh.sa" />
           </Form.Item>
